@@ -374,6 +374,40 @@ class SkillIn(BaseModel):
     webhook_url: str = ''
     enabled: bool = True
 
+@app.get('/api/skills/source')
+def skill_source(id: str = Query(...)):
+    """Return the source code for a skill — also checks for a matching .py file."""
+    # Check JSON skill first
+    json_path = SKILLS_DIR / f'{id}.json'
+    if json_path.exists():
+        s = json.loads(json_path.read_text())
+        if s.get('code'):
+            return {'code': s['code'], 'source': 'json'}
+        # Try a matching .py by name
+        py_name = s.get('name', '').replace(' ', '_') + '.py'
+        py_path = SKILLS_DIR / py_name
+        if py_path.exists():
+            return {'code': py_path.read_text(), 'source': 'file'}
+    # Fallback: look for .py with matching name/id
+    for py_path in SKILLS_DIR.glob('*.py'):
+        if py_path.stem.lower() == id.lower():
+            return {'code': py_path.read_text(), 'source': 'file'}
+    raise HTTPException(404, 'Skill source not found')
+
+@app.get('/api/skills/find')
+def find_skill(name: str = Query(...)):
+    """Find skills by partial name or exact ID — used by /validate_skill command."""
+    needle = name.strip().lower()
+    hits = []
+    for f in sorted(SKILLS_DIR.glob('*.json')):
+        try:
+            s = json.loads(f.read_text())
+            if needle in s.get('name', '').lower() or needle == s.get('id', '').lower():
+                hits.append(s)
+        except Exception:
+            pass
+    return hits
+
 @app.get('/api/skills')
 def list_skills():
     result = []

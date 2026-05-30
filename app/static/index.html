@@ -205,7 +205,10 @@
       </div>
 
       <!-- Input area -->
-      <div class="input-area">
+      <div class="input-area" style="position:relative">
+        <!-- Slash command autocomplete — appears above input when typing / -->
+        <div class="cmd-dropdown" id="cmd-dropdown"></div>
+
         <div class="input-toolbar">
           <button class="mode-btn active" id="mode-chat" onclick="setMode('chat')">Chat</button>
           <button class="mode-btn" id="mode-agent" onclick="setMode('agent')">Agent</button>

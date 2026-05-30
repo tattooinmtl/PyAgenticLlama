@@ -348,10 +348,19 @@ async function sendMessage() {
   const box = document.getElementById('input-box');
   const msg = box.value.trim();
   if (!msg) return;
-  if (!state.serverRunning) { toast('Load a model first', 'error'); return; }
 
+  _hideCmdDropdown();
   box.value = '';
   box.style.height = 'auto';
+
+  // Intercept slash commands before sending to the model
+  if (msg.startsWith('/')) {
+    removeEmptyState();
+    await handleSlashCommand(msg);
+    return;
+  }
+
+  if (!state.serverRunning) { toast('Load a model first', 'error'); return; }
 
   removeEmptyState();
   appendMessage('user', msg);
@@ -363,7 +372,7 @@ async function sendMessage() {
   }
 }
 
-async function streamChat(msg) {
+async function streamChat(msg, systemOverride = null) {
   state.streaming = true;
   _abortCtrl = new AbortController();
   _setGenerating(true);
@@ -388,6 +397,7 @@ async function streamChat(msg) {
       body: JSON.stringify({
         message: msg,
         personality_id: state.personalityId,
+        system: systemOverride || undefined,   // overrides personality for validate/fix commands
         stream: true,
         conv_id: state.convId,
         server_name: 'main',
@@ -1427,19 +1437,309 @@ function saveChat() {
   a.click();
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ── Slash Commands ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+const SLASH_COMMANDS = [
+  { cmd: '/validate_skill', desc: 'Validate a skill with AI',        usage: '/validate_skill <name>' },
+  { cmd: '/fix_skill',      desc: 'Ask AI to rewrite a broken skill', usage: '/fix_skill <name>' },
+  { cmd: '/list_skills',    desc: 'Show all registered skills',       usage: '/list_skills' },
+  { cmd: '/compact',        desc: 'Summarize + compact context',       usage: '/compact' },
+  { cmd: '/clear',          desc: 'Clear chat history',               usage: '/clear' },
+  { cmd: '/remember',       desc: 'Save a fact to memory',            usage: '/remember <text>' },
+  { cmd: '/recall',         desc: 'Search memory',                    usage: '/recall <query>' },
+  { cmd: '/help',           desc: 'Show all slash commands',          usage: '/help' },
+];
+
+let _cmdSelectedIdx = -1;
+
+function _cmdDropdown()  { return document.getElementById('cmd-dropdown'); }
+function _cmdInput()     { return document.getElementById('input-box'); }
+
+function _showCmdDropdown(filter) {
+  const dd = _cmdDropdown();
+  const matches = filter
+    ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(filter.toLowerCase()))
+    : SLASH_COMMANDS;
+
+  if (!matches.length) { _hideCmdDropdown(); return; }
+
+  _cmdSelectedIdx = 0;
+  dd.innerHTML = matches.map((c, i) => `
+    <div class="cmd-item${i === 0 ? ' selected' : ''}" data-cmd="${c.cmd}">
+      <span class="cmd-name">${c.cmd}</span>
+      <span class="cmd-desc">${c.desc}</span>
+      <span class="cmd-usage">${c.usage}</span>
+    </div>`).join('');
+
+  dd.querySelectorAll('.cmd-item').forEach((el, i) => {
+    el.onmouseenter = () => {
+      dd.querySelectorAll('.cmd-item').forEach(e => e.classList.remove('selected'));
+      el.classList.add('selected');
+      _cmdSelectedIdx = i;
+    };
+    el.onclick = () => _selectCmd(el.dataset.cmd);
+  });
+
+  dd.classList.add('open');
+}
+
+function _hideCmdDropdown() {
+  _cmdDropdown().classList.remove('open');
+  _cmdSelectedIdx = -1;
+}
+
+function _selectCmd(cmd) {
+  const box = _cmdInput();
+  // Replace current /... text with the chosen command + space
+  box.value = cmd + ' ';
+  _hideCmdDropdown();
+  box.focus();
+}
+
+function _cmdNavKey(dir) {
+  const dd = _cmdDropdown();
+  const items = dd.querySelectorAll('.cmd-item');
+  if (!items.length) return false;
+  items[_cmdSelectedIdx]?.classList.remove('selected');
+  _cmdSelectedIdx = (_cmdSelectedIdx + dir + items.length) % items.length;
+  items[_cmdSelectedIdx]?.classList.add('selected');
+  return true;
+}
+
+// ── Slash command router ───────────────────────────────────────────
+async function handleSlashCommand(raw) {
+  const parts  = raw.trim().split(/\s+/);
+  const cmd    = parts[0].toLowerCase();
+  const args   = parts.slice(1).join(' ').trim();
+
+  switch (cmd) {
+    case '/validate_skill': return runValidateSkill(args, false);
+    case '/fix_skill':      return runValidateSkill(args, true);
+    case '/list_skills':    return listSkillsInChat();
+    case '/compact':        return compactContext();
+    case '/clear':          return clearContext();
+    case '/remember':       return quickRemember(args);
+    case '/recall':         return quickRecall(args);
+    case '/help':           return showHelp();
+    default:
+      addSystemMessage(`Unknown command: ${cmd}. Type /help for the list.`);
+  }
+}
+
+// ── /validate_skill & /fix_skill ──────────────────────────────────
+
+const SKILL_TEMPLATE = `\`\`\`python
+def execute(**kwargs):
+    # 1. Read your arguments
+    param = kwargs.get("param_name", "default")
+
+    # 2. Install dependencies inside execute() (auto-installs on first run)
+    try:
+        import requests
+    except ImportError:
+        import subprocess, sys
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+        import requests
+
+    # 3. Use vault for secrets — never hardcode API keys
+    # api_key = vault_get("MY_API_KEY")
+
+    # 4. Do the work
+    result = f"Result for: {param}"
+
+    # 5. Always return a STRING
+    return result
+\`\`\``;
+
+const VALIDATE_SYSTEM = `You are a skill validator for PyAgenticLlama.
+
+A "skill" is a Python snippet stored in a JSON file. The app calls \`execute(**kwargs)\` from it.
+
+RULES a valid skill must follow:
+1. Must define \`def execute(**kwargs)\`
+2. Must RETURN a string (not print, not yield — return)
+3. All imports must be inside execute() or inside a helper function — never at module level (skills are exec'd, not imported)
+4. Use \`kwargs.get("param", default)\` to read arguments
+5. Use \`vault_get("KEY")\` to read stored secrets — never hardcode keys
+6. If deps need installing, use subprocess.check_call inside the function
+
+CORRECT TEMPLATE:
+${SKILL_TEMPLATE}
+
+Your task:
+1. ✅ List what is CORRECT
+2. ⚠️ List every PROBLEM with line references if possible
+3. 🔧 Show the FULLY CORRECTED skill code in a complete \`\`\`python block
+4. Final verdict on its own line: VALID ✅ / FIXABLE ⚠️ / BROKEN ❌`;
+
+const FIX_SYSTEM = `You are a skill repair tool for PyAgenticLlama.
+Rewrite the following skill so it is fully correct and working.
+Output ONLY the corrected skill in a single \`\`\`python code block — no explanation outside the block.
+Follow these rules:
+1. Function must be named \`execute(**kwargs)\`
+2. Must return a string
+3. All imports inside execute() or helper functions (never module-level)
+4. Use vault_get("KEY") for secrets
+5. Handle the case where required args are missing`;
+
+async function runValidateSkill(skillName, fixMode) {
+  if (!state.serverRunning) { toast('Load a model first', 'error'); return; }
+
+  if (!skillName) {
+    // Show list of skills to choose from
+    const skills = await API.get('/api/skills').catch(() => []);
+    if (!skills.length) { addSystemMessage('No skills found. Create one first.'); return; }
+    addSystemMessage('Available skills:\n' + skills.map(s => `  • ${s.name}  (id: ${s.id})`).join('\n')
+      + `\n\nUsage: /validate_skill <name>`);
+    return;
+  }
+
+  // Find skill(s) matching the name
+  let hits = [];
+  try {
+    hits = await API.get('/api/skills/find?name=' + encodeURIComponent(skillName));
+  } catch (e) { /* fallback: scan all */ }
+
+  if (!hits.length) {
+    // Fallback: try to read the .py file directly if name matches a file
+    addSystemMessage(`No skill found matching "${skillName}". Check the skill name in the Skills tab.`);
+    return;
+  }
+
+  const skill = hits[0];
+
+  // Build the context block the AI will see
+  let skillContext = `Skill name: ${skill.name}\nAction type: ${skill.action_type}\nDescription: ${skill.description}\n`;
+  if (skill.parameters && Object.keys(skill.parameters).length) {
+    skillContext += `Parameters schema:\n${JSON.stringify(skill.parameters, null, 2)}\n`;
+  }
+
+  if (skill.action_type === 'python' && skill.code) {
+    skillContext += `\nSkill code:\n\`\`\`python\n${skill.code}\n\`\`\``;
+  } else if (skill.action_type === 'webhook') {
+    skillContext += `\nWebhook URL: ${skill.webhook_url}`;
+  } else {
+    skillContext += `\n(No code found — skill may be stored as a .py file)`;
+
+    // Try to load the .py file
+    try {
+      const pyPath = `app/skills/${skill.name}.py`;
+      const res = await fetch(`/api/skills/source?id=${skill.id}`).catch(() => null);
+      if (res?.ok) {
+        const src = await res.json();
+        skillContext += `\n\`\`\`python\n${src.code}\n\`\`\``;
+      }
+    } catch (e) { /* skip */ }
+  }
+
+  const userMsg = fixMode
+    ? `Please rewrite and fix this skill completely:\n\n${skillContext}`
+    : `Please validate this skill and tell me what is correct, what is wrong, and show the fixed version:\n\n${skillContext}`;
+
+  // Show in chat as a user message with a header indicating this is a validation request
+  removeEmptyState();
+  const wrap = document.createElement('div');
+  wrap.className = 'msg user';
+  wrap.innerHTML = `
+    <div class="msg-meta"><span class="msg-role">You</span></div>
+    <div class="msg-bubble">
+      <div class="validate-header">
+        ${fixMode ? '🔧 Fix Skill' : '🔍 Validate Skill'} — <strong>${escHtml(skill.name)}</strong>
+      </div>
+      <div class="validate-code">${escHtml(skill.code || '(no inline code)')}</div>
+      <em style="font-size:12px;color:rgba(255,255,255,0.7)">Asking AI to ${fixMode ? 'rewrite' : 'review'} this skill…</em>
+    </div>`;
+  document.getElementById('messages').appendChild(wrap);
+  scrollToBottom();
+
+  // Stream the AI response with the validation system prompt
+  await streamChat(userMsg, fixMode ? FIX_SYSTEM : VALIDATE_SYSTEM);
+}
+
+// ── /list_skills ──────────────────────────────────────────────────
+
+async function listSkillsInChat() {
+  const skills = await API.get('/api/skills').catch(() => []);
+  if (!skills.length) { addSystemMessage('No skills registered yet.'); return; }
+  const lines = ['**Registered Skills**\n'];
+  skills.forEach(s => {
+    const status = s.enabled ? '✅' : '⛔';
+    lines.push(`${status} **${s.name}** (${s.action_type}) — ${s.description}`);
+  });
+  addSystemMessage(lines.join('\n'));
+}
+
+// ── /remember & /recall ───────────────────────────────────────────
+
+async function quickRemember(text) {
+  if (!text) { addSystemMessage('Usage: /remember <what to remember>'); return; }
+  await API.post('/api/brain/remember', { content: text, type_: 'fact', tags: [] });
+  addSystemMessage(`✅ Remembered: "${text}"`);
+}
+
+async function quickRecall(query) {
+  if (!query) { addSystemMessage('Usage: /recall <search query>'); return; }
+  const results = await API.get('/api/brain/recall?q=' + encodeURIComponent(query) + '&limit=5').catch(() => []);
+  if (!results.length) { addSystemMessage(`No memories found for: "${query}"`); return; }
+  const lines = [`**Memory recall for: ${query}**\n`];
+  results.forEach((m, i) => lines.push(`${i+1}. [${m.type}] ${m.content}`));
+  addSystemMessage(lines.join('\n'));
+}
+
+// ── /help ─────────────────────────────────────────────────────────
+
+function showHelp() {
+  const lines = ['**Slash Commands**\n'];
+  SLASH_COMMANDS.forEach(c => lines.push(`\`${c.usage}\` — ${c.desc}`));
+  addSystemMessage(lines.join('\n'));
+}
+
 // ── Textarea auto-resize + Enter to send ─────────────────────────
 function initInput() {
   const box = document.getElementById('input-box');
+
   box.addEventListener('keydown', (e) => {
+    const dd = _cmdDropdown();
+
+    // Navigate autocomplete with arrow keys
+    if (dd.classList.contains('open')) {
+      if (e.key === 'ArrowUp')   { e.preventDefault(); _cmdNavKey(-1); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); _cmdNavKey(+1); return; }
+      if (e.key === 'Tab' || (e.key === 'Enter' && _cmdSelectedIdx >= 0)) {
+        e.preventDefault();
+        const sel = dd.querySelector('.cmd-item.selected');
+        if (sel) _selectCmd(sel.dataset.cmd);
+        return;
+      }
+      if (e.key === 'Escape') { _hideCmdDropdown(); return; }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   });
+
   box.addEventListener('input', () => {
     box.style.height = 'auto';
     box.style.height = Math.min(box.scrollHeight, 160) + 'px';
+
+    const val = box.value;
+    // Show command autocomplete when typing /
+    if (val.startsWith('/') && !val.includes(' ')) {
+      _showCmdDropdown(val);
+    } else {
+      _hideCmdDropdown();
+    }
   });
+
+  // Hide dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.input-area')) _hideCmdDropdown();
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === 'n') { e.preventDefault(); newChat(); }
   });
