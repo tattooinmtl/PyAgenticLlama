@@ -103,6 +103,7 @@ function handleAction(action) {
     case 'server-log':     openLogModal(); break;
     case 'open-vault':     openVaultModal(); break;
     case 'open-personalities': openPersonalitiesModal(); break;
+    case 'open-mcp':       switchRightTab('mcp'); loadMcpServers(); break;
     case 'new-skill':      openSkillModal(null); break;
     case 'toggle-agent-mode': setMode(state.mode === 'agent' ? 'chat' : 'agent'); break;
     case 'spawn-agent':    openSpawnModal(); break;
@@ -121,10 +122,11 @@ function initTabs() {
       panel.querySelectorAll('.panel-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
       panel.querySelectorAll('.panel-content').forEach(c => c.classList.toggle('active', c.dataset.tab === tabName));
       // Lazy load when tab activated
-      if (tabName === 'memory') loadMemories();
-      if (tabName === 'agents') loadAgents();
+      if (tabName === 'memory')  loadMemories();
+      if (tabName === 'agents')  loadAgents();
       if (tabName === 'history') loadHistory();
-      if (tabName === 'skills') loadSkills();
+      if (tabName === 'skills')  loadSkills();
+      if (tabName === 'mcp')     loadMcpServers();
     });
   });
 }
@@ -641,9 +643,9 @@ function renderMarkdown(text) {
   if (!text) return '';
 
   // ── Fenced code blocks — rendered as rich interactive blocks ────
-  let html = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    lang = (lang || 'text').toLowerCase();
-    code = code.trimEnd();
+  let html = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, rawLang, rawCode) => {
+    const lang = (rawLang || 'text').toLowerCase();
+    const code = rawCode.trimEnd();
     const id   = _storeCode(lang, code);
     const esc  = escHtml(code);
     const isRunnable  = ['python', 'py'].includes(lang);
@@ -840,6 +842,7 @@ async function loadSkills() {
         <div class="skill-desc">${escHtml(s.description)}</div>
         <div class="skill-footer">
           <span class="skill-type">${s.action_type}</span>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="openTestSkillModal('${s.id}', '${escHtml(s.name)}')" title="Test skill">▶</button>
           <button class="btn btn-ghost btn-sm btn-icon" onclick="openSkillModal(${JSON.stringify(s)})" title="Edit">✏️</button>
           <button class="btn btn-danger btn-sm btn-icon" onclick="deleteSkill('${s.id}')" title="Delete">🗑</button>
         </div>
@@ -1268,7 +1271,7 @@ async function browseTo(path) {
 }
 
 function browserUp() {
-  const parent = document.getElementById('browser-up').dataset.parent;
+  const { parent } = document.getElementById('browser-up').dataset;
   if (parent) browseTo(parent);
 }
 
@@ -1445,6 +1448,193 @@ function startPolling() {
   checkServerStatus();
   setInterval(checkServerStatus, 15000);
   setInterval(() => { if (state.serverRunning) updateContextBar(); }, 10000);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ── MCP Servers ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+async function loadMcpServers() {
+  try {
+    const servers = await API.get('/api/mcp/servers');
+    const list = document.getElementById('mcp-list');
+    list.innerHTML = '';
+
+    if (!servers.length) {
+      list.innerHTML = `<div style="color:var(--text3);font-size:12px;text-align:center;padding:14px">
+        No MCP servers configured.<br>Click <strong>+ Add Server</strong> to connect one.
+      </div>`;
+      return;
+    }
+
+    servers.forEach(s => {
+      const card = document.createElement('div');
+      card.className = 'mcp-card';
+      const toolChips = s.tools.slice(0, 6).map(t =>
+        `<span class="mcp-tool-chip">${escHtml(t.name)}</span>`).join('');
+      const moreTools = s.tool_count > 6 ? `<span class="mcp-tool-chip">+${s.tool_count - 6}</span>` : '';
+      card.innerHTML = `
+        <div class="mcp-card-top">
+          <span class="mcp-status-dot ${s.connected ? 'on' : ''}"></span>
+          <span class="mcp-name">${escHtml(s.name)}</span>
+          <span class="badge ${s.connected ? 'badge-green' : 'badge-yellow'}">${s.connected ? `${s.tool_count} tools` : 'offline'}</span>
+        </div>
+        ${s.description ? `<div class="mcp-desc">${escHtml(s.description)}</div>` : ''}
+        ${s.tools.length ? `<div class="mcp-tools">${toolChips}${moreTools}</div>` : ''}
+        ${s.error ? `<div style="font-size:11px;color:var(--red);margin-bottom:5px">${escHtml(s.error)}</div>` : ''}
+        <div class="mcp-actions">
+          ${s.connected
+            ? `<button class="btn btn-danger btn-sm" onclick="mcpDisconnect('${s.name}')">Disconnect</button>`
+            : `<button class="btn btn-success btn-sm" onclick="mcpConnect('${s.name}')">Connect</button>`
+          }
+          <button class="btn btn-ghost btn-sm" onclick="openMcpAddModal(${JSON.stringify(s).replace(/"/g,'&quot;')})">Edit</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="mcpRemove('${s.name}')" title="Remove">🗑</button>
+        </div>
+      `;
+      list.appendChild(card);
+    });
+  } catch (e) {
+    toast('MCP load failed: ' + e.message, 'error');
+  }
+}
+
+async function mcpConnect(name) {
+  try {
+    toast(`Connecting to ${name}…`, 'info', 2000);
+    await API.post(`/api/mcp/servers/${encodeURIComponent(name)}/connect`);
+    toast(`${name} connected`, 'success');
+    loadMcpServers();
+  } catch (e) {
+    toast(`Connect failed: ${e.message}`, 'error', 5000);
+  }
+}
+
+async function mcpDisconnect(name) {
+  await API.post(`/api/mcp/servers/${encodeURIComponent(name)}/disconnect`);
+  toast(`${name} disconnected`, 'info');
+  loadMcpServers();
+}
+
+async function mcpRemove(name) {
+  if (!confirm(`Remove MCP server "${name}"?`)) return;
+  await API.del(`/api/mcp/servers/${encodeURIComponent(name)}`);
+  toast(`${name} removed`, 'info');
+  loadMcpServers();
+}
+
+async function openMcpAddModal(existing) {
+  // Load presets into modal
+  try {
+    const presets = await API.get('/api/mcp/presets');
+    const pc = document.getElementById('mcp-presets');
+    pc.innerHTML = '';
+    presets.forEach(p => {
+      const btn = document.createElement('button');
+      btn.className = 'mcp-preset-btn';
+      btn.textContent = p.name;
+      btn.title = p.description;
+      btn.onclick = () => {
+        document.getElementById('mcp-name').value    = p.name;
+        document.getElementById('mcp-desc').value    = p.description || '';
+        document.getElementById('mcp-command').value = p.command;
+        document.getElementById('mcp-args').value    = (p.args || []).join('\n');
+        document.getElementById('mcp-env').value     = Object.entries(p.env || {}).map(([k,v]) => `${k}=${v}`).join('\n');
+      };
+      pc.appendChild(btn);
+    });
+  } catch (e) { /* silent */ }
+
+  if (existing) {
+    document.getElementById('mcp-edit-name').value  = existing.name || '';
+    document.getElementById('mcp-name').value        = existing.name || '';
+    document.getElementById('mcp-desc').value        = existing.description || '';
+    document.getElementById('mcp-command').value     = existing.command || '';
+    document.getElementById('mcp-args').value        = (existing.args || []).join('\n');
+    document.getElementById('mcp-env').value         = (existing.env_keys || []).map(k => `${k}=`).join('\n');
+    document.getElementById('mcp-enabled').checked   = existing.enabled !== false;
+  } else {
+    ['mcp-edit-name','mcp-name','mcp-desc','mcp-command','mcp-args','mcp-env'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('mcp-enabled').checked = true;
+  }
+  openModal('mcp-modal');
+}
+
+async function saveMcpServer() {
+  const name    = document.getElementById('mcp-name').value.trim();
+  const command = document.getElementById('mcp-command').value.trim();
+  if (!name || !command) { toast('Name and command are required', 'error'); return; }
+
+  const args = document.getElementById('mcp-args').value.split('\n').map(l => l.trim()).filter(Boolean);
+  const env  = {};
+  document.getElementById('mcp-env').value.split('\n').forEach(line => {
+    const eq = line.indexOf('=');
+    if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+  });
+
+  try {
+    await API.post('/api/mcp/servers', {
+      name, command, args, env,
+      description: document.getElementById('mcp-desc').value,
+      enabled: document.getElementById('mcp-enabled').checked,
+    });
+    closeModal('mcp-modal');
+    toast(`Saved — connecting to ${name}…`, 'info', 2000);
+    await mcpConnect(name);
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ── Test Skill ────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+let _testSkillId = null;
+
+function openTestSkillModal(skillId, skillName) {
+  _testSkillId = skillId;
+  document.getElementById('test-skill-name').textContent = skillName;
+  document.getElementById('test-skill-args').value = '{}';
+  document.getElementById('test-skill-output').style.display = 'none';
+  openModal('test-skill-modal');
+}
+
+async function runTestSkill() {
+  if (!_testSkillId) return;
+  let kwargs = {};
+  try {
+    kwargs = JSON.parse(document.getElementById('test-skill-args').value || '{}');
+  } catch (e) {
+    toast('Arguments must be valid JSON', 'error'); return;
+  }
+
+  const runBtn = document.getElementById('test-skill-run-btn');
+  const status = document.getElementById('test-skill-status');
+  const result = document.getElementById('test-skill-result');
+  const out    = document.getElementById('test-skill-output');
+
+  runBtn.disabled = true;
+  runBtn.textContent = '⏳ Running…';
+  out.style.display = '';
+  status.innerHTML = '<span class="spinner"></span> Running…';
+  result.textContent = '';
+  result.className = 'code-output-body';
+
+  try {
+    const data = await API.post('/api/skills/test', { skill_id: _testSkillId, kwargs });
+    status.innerHTML = '<span style="color:var(--green)">✓ OK</span>';
+    result.textContent = String(data.result);
+    result.className = 'code-output-body ok';
+  } catch (e) {
+    status.innerHTML = '<span style="color:var(--red)">✗ Error</span>';
+    result.textContent = e.message;
+    result.className = 'code-output-body err';
+  } finally {
+    runBtn.disabled = false;
+    runBtn.textContent = '▶ Run';
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -11,6 +11,7 @@ from .gguf import model_info
 from .hardware import system_info, will_fit
 from .llama import get_server, stop_all, all_servers
 from .context import get_context
+from .mcp_client import mcp, PRESETS
 from .brain import (remember, recall, all_memories, delete_memory, clear_memories,
                     save_conversation, add_message, list_conversations,
                     get_conversation_messages, delete_conversation)
@@ -29,6 +30,7 @@ async def lifespan(app):
     set_env_from_vault()   # Load vault env vars on startup
     yield
     await stop_all()
+    await mcp.disconnect_all()
 
 app = FastAPI(lifespan=lifespan, title='LocalAI')
 app.mount('/static', StaticFiles(directory=Path(__file__).parent / 'static'), name='static')
@@ -240,6 +242,8 @@ def _skills_as_tools() -> list:
             })
         except Exception:
             pass
+    # Append live MCP tools from all connected servers
+    tools.extend(mcp.as_openai_tools())
     return tools
 
 @app.post('/api/chat')
@@ -496,11 +500,18 @@ async def agent_run(req: AgentRequest):
             except Exception:
                 args = {}
             skill = skills_by_name.get(fn_name)
+            mcp_target = mcp.resolve(fn_name)
             if skill:
                 try:
                     result = await _execute_skill(skill, args)
                 except Exception as e:
                     result = f'Error executing {fn_name}: {e}'
+            elif mcp_target:
+                srv_name, tool_name = mcp_target
+                try:
+                    result = await mcp.call(srv_name, tool_name, args)
+                except Exception as e:
+                    result = f'MCP error ({srv_name}/{tool_name}): {e}'
             else:
                 result = f'Unknown tool: {fn_name}'
             trace.append({'tool': fn_name, 'args': args, 'result': result})
@@ -734,3 +745,86 @@ def del_personality(id_: str):
         return {'status': 'deleted'}
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+# ── MCP Server management ──────────────────────────────────────────
+
+class MCPAddRequest(BaseModel):
+    name: str
+    command: str
+    args: list[str] = []
+    env: dict = {}
+    description: str = ''
+    enabled: bool = True
+
+@app.get('/api/mcp/servers')
+def mcp_list():
+    return mcp.status()
+
+@app.get('/api/mcp/presets')
+def mcp_presets():
+    return PRESETS
+
+@app.post('/api/mcp/servers')
+def mcp_add(req: MCPAddRequest):
+    # Substitute vault values into env
+    resolved_env = {}
+    for k, v in req.env.items():
+        resolved_env[k] = v or get_secret(k, v)
+    cfg = mcp.add_config(req.name, req.command, req.args, resolved_env, req.description, req.enabled)
+    return cfg.to_dict()
+
+@app.delete('/api/mcp/servers/{name}')
+async def mcp_remove(name: str):
+    await mcp.disconnect(name)
+    mcp.remove_config(name)
+    return {'status': 'removed'}
+
+@app.post('/api/mcp/servers/{name}/connect')
+async def mcp_connect(name: str):
+    try:
+        conn = await mcp.connect(name)
+        return conn.status()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post('/api/mcp/servers/{name}/disconnect')
+async def mcp_disconnect(name: str):
+    await mcp.disconnect(name)
+    return {'status': 'disconnected', 'name': name}
+
+@app.get('/api/mcp/servers/{name}/tools')
+def mcp_tools(name: str):
+    status = next((s for s in mcp.status() if s['name'] == name), None)
+    if not status:
+        raise HTTPException(404, 'Server not found')
+    return status['tools']
+
+@app.post('/api/mcp/servers/{name}/call')
+async def mcp_call(name: str, body: dict):
+    tool_name = body.get('tool')
+    args      = body.get('arguments', {})
+    if not tool_name:
+        raise HTTPException(400, 'Missing tool name')
+    try:
+        result = await mcp.call(name, tool_name, args)
+        return {'result': result}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ── Test Skill ─────────────────────────────────────────────────────
+
+class TestSkillRequest(BaseModel):
+    skill_id: str
+    kwargs: dict = {}
+
+@app.post('/api/skills/test')
+async def test_skill(req: TestSkillRequest):
+    path = SKILLS_DIR / f'{req.skill_id}.json'
+    if not path.exists():
+        raise HTTPException(404, 'Skill not found')
+    skill = json.loads(path.read_text())
+    try:
+        result = await _execute_skill(skill, req.kwargs)
+        return {'result': result, 'status': 'ok'}
+    except Exception as e:
+        raise HTTPException(500, str(e))

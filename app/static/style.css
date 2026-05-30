@@ -580,3 +580,16 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 .win-btn:hover        { background: var(--surface3); color: var(--text); }
 .win-btn.win-btn-on   { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+/* ── MCP Server Cards ─────────────────────────────────────────── */
+.mcp-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
+.mcp-card-top { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+.mcp-name { font-weight: 700; font-size: 13px; flex: 1; }
+.mcp-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text3); flex-shrink: 0; }
+.mcp-status-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.mcp-desc { font-size: 11px; color: var(--text2); margin-bottom: 5px; }
+.mcp-tools { font-size: 10px; color: var(--text3); margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 3px; }
+.mcp-tool-chip { background: var(--bg); border: 1px solid var(--border2); border-radius: 8px; padding: 1px 6px; color: var(--cyan); font-family: var(--mono); }
+.mcp-actions { display: flex; gap: 5px; }
+.mcp-preset-btn { padding: 3px 8px; font-size: 11px; border-radius: 5px; cursor: pointer; border: 1px solid var(--border2); background: var(--surface3); color: var(--text2); transition: all .12s; }
+.mcp-preset-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }

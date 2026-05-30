@@ -63,7 +63,7 @@
         <a data-action="open-vault">Vault & API Keys...</a>
         <a data-action="open-personalities">Personalities...</a>
         <hr>
-        <a data-action="open-mcp">MCP Servers (coming soon)</a>
+        <a data-action="open-mcp">MCP Servers...</a>
       </div>
     </div>
 
@@ -223,6 +223,7 @@
     <aside class="right-panel" id="right-panel">
       <div class="panel-tabs">
         <div class="panel-tab active" data-tab="skills">Skills</div>
+        <div class="panel-tab" data-tab="mcp">MCP</div>
         <div class="panel-tab" data-tab="agents">Agents</div>
         <div class="panel-tab" data-tab="history">History</div>
       </div>
@@ -231,6 +232,18 @@
       <div class="panel-content active" data-tab="skills" id="tab-skills">
         <button class="btn btn-primary btn-full btn-sm" onclick="openSkillModal(null)">+ New Skill</button>
         <div id="skills-list" style="display:flex; flex-direction:column; gap:7px; margin-top:4px"></div>
+      </div>
+
+      <!-- MCP Tab -->
+      <div class="panel-content" data-tab="mcp" id="tab-mcp">
+        <div style="display:flex;gap:6px;margin-bottom:4px">
+          <button class="btn btn-primary btn-sm" style="flex:1" onclick="openMcpAddModal(null)">+ Add Server</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadMcpServers()" title="Refresh">↻</button>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px">
+          Requires Node.js for <code>npx</code>-based servers
+        </div>
+        <div id="mcp-list" style="display:flex;flex-direction:column;gap:7px"></div>
       </div>
 
       <!-- Agents Tab -->
@@ -509,6 +522,74 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('log-modal')">Close</button>
       <button class="btn btn-ghost" onclick="loadServerLog()">Refresh</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MCP Add/Edit Modal ─────────────────────────────────────── -->
+<div class="modal-overlay" id="mcp-modal">
+  <div class="modal-box">
+    <div class="modal-title">🔌 MCP Server</div>
+    <input type="hidden" id="mcp-edit-name">
+
+    <!-- Presets quick-install -->
+    <div>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:6px">Quick Install Preset</div>
+      <div id="mcp-presets" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+    </div>
+    <hr style="border-color:var(--border);margin:4px 0">
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Server Name (unique ID)</label>
+        <input type="text" id="mcp-name" placeholder="e.g. filesystem">
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" id="mcp-desc" placeholder="What this server does">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Command</label>
+      <input type="text" id="mcp-command" placeholder="node  or  npx  or  python">
+    </div>
+    <div class="form-group">
+      <label>Arguments (one per line)</label>
+      <textarea id="mcp-args" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;C:\Users\ThePa"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Environment Variables (KEY=value, one per line — use vault key name for secrets)</label>
+      <textarea id="mcp-env" rows="2" placeholder="BRAVE_API_KEY=sk-...&#10;ANOTHER_VAR=value"></textarea>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label class="switch"><input type="checkbox" id="mcp-enabled" checked><span class="slider"></span></label>
+      <span style="font-size:12px;color:var(--text2)">Enabled</span>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('mcp-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMcpServer()">Save & Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Test Skill Modal ────────────────────────────────────────── -->
+<div class="modal-overlay" id="test-skill-modal">
+  <div class="modal-box narrow">
+    <div class="modal-title">🧪 Test Skill</div>
+    <div id="test-skill-name" style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:4px"></div>
+    <div class="form-group">
+      <label>Arguments (JSON object)</label>
+      <textarea id="test-skill-args" rows="5" placeholder='{"query": "hello world"}'>{}</textarea>
+    </div>
+    <div id="test-skill-output" style="display:none">
+      <div class="code-output" style="margin-top:4px">
+        <div class="code-output-header" id="test-skill-status">Result</div>
+        <div class="code-output-body" id="test-skill-result" style="max-height:200px"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('test-skill-modal')">Close</button>
+      <button class="btn btn-primary" id="test-skill-run-btn" onclick="runTestSkill()">▶ Run</button>
     </div>
   </div>
 </div>
