@@ -77,6 +77,39 @@ Create unlimited custom personalities with avatar color, icon, system prompt, te
 
 ---
 
+## VS Code Integration
+
+Install the bundled extension to sync PyAgenticLlama with VS Code — send AI code directly into the editor and open the shared workspace folder in one click.
+
+### Install
+
+```
+cd vscode-extension
+install.bat
+```
+
+Then **restart VS Code**. The 🦙 PyAgenticLlama status bar item appears at the bottom right.
+
+### Open the shared workspace folder (no file browsing needed)
+
+1. Press `Ctrl+Shift+P`
+2. Type **PyAgenticLlama: Open Shared Workspace Folder**
+3. VS Code opens `workspace/` — the same folder PyAgenticLlama writes files to
+
+Or click the **🦙 PyAgenticLlama** status bar item → **Open Workspace**.
+
+The `workspace/` folder is the shared root. Files saved from the CodingSpace panel appear here instantly in VS Code's Explorer (no sync needed — it's the same directory on disk).
+
+### CodingSpace (split-screen editor)
+
+Type `/CodingSpace` in PyAgenticLlama to open a split layout:
+- **Left** — chat with the AI
+- **Right** — code editor + file tree for the `workspace/` folder
+
+Every AI code block gets a **→ CS** button. Click it to load the code into the editor, give it a filename, hit **💾 Save**, then **📂 VS Code** to open the whole workspace — or **⌗ VS Code** to send just that file as a new tab.
+
+---
+
 ## Requirements
 
 - **Windows 10/11**

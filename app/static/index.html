@@ -548,6 +548,44 @@
   </div>
 </div>
 
+<!-- ── CodingSpace Panel (right half of split layout) ─────────── -->
+<div id="cs-panel">
+
+  <div id="cs-panel-header">
+    <span id="cs-ws-label" title="Shared workspace folder">🗂 CodingSpace</span>
+    <div id="cs-header-actions">
+      <button class="btn btn-ghost btn-sm" onclick="csNewFile()" title="New file">+ New</button>
+      <button class="btn btn-ghost btn-sm" onclick="csOpenInVSCode()" title="Open workspace in VS Code">📂 VS Code</button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleCodingSpace()" title="Close CodingSpace">✕</button>
+    </div>
+  </div>
+
+  <div id="cs-body">
+
+    <!-- File tree -->
+    <div id="cs-tree">
+      <div id="cs-tree-header">
+        <span style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Files</span>
+        <button class="btn btn-ghost btn-sm" onclick="csRefreshTree()" title="Refresh" style="padding:1px 6px;font-size:11px">↻</button>
+      </div>
+      <div id="cs-tree-list"></div>
+    </div>
+
+    <!-- Editor -->
+    <div id="cs-editor-pane">
+      <div id="cs-editor-toolbar">
+        <input type="text" id="cs-filename" placeholder="filename.py" autocomplete="off" spellcheck="false">
+        <button class="btn btn-primary btn-sm"  onclick="csSave()" title="Save to workspace">💾 Save</button>
+        <button class="btn btn-ghost btn-sm"    onclick="csSendToVSCode()" title="Send to VS Code as new tab">⌗ VS Code</button>
+        <button class="btn btn-ghost btn-sm"    onclick="csDeleteFile()" title="Delete file from workspace" id="cs-delete-btn" style="display:none;color:var(--red)">🗑</button>
+      </div>
+      <textarea id="cs-editor" spellcheck="false" placeholder="// AI code goes here — click → CS on any code block, or create a new file"></textarea>
+      <div id="cs-editor-status"></div>
+    </div>
+
+  </div>
+</div>
+
 <!-- ── Provider Modal ─────────────────────────────────────────── -->
 <div class="modal-overlay" id="provider-modal">
   <div class="modal-box" style="width:480px">

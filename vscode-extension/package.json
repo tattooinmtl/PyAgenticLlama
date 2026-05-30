@@ -20,8 +20,12 @@
         "title": "PyAgenticLlama: Open App in Browser"
       },
       {
+        "command": "pyagenticllama.openWorkspace",
+        "title": "PyAgenticLlama: Open Shared Workspace Folder"
+      },
+      {
         "command": "pyagenticllama.openProjectFolder",
-        "title": "PyAgenticLlama: Open Project Folder in Workspace"
+        "title": "PyAgenticLlama: Open Project Folder (Browse...)"
       }
     ],
     "configuration": {
@@ -36,6 +40,11 @@
           "type": "string",
           "default": "http://localhost:7860",
           "description": "URL of your running PyAgenticLlama app"
+        },
+        "pyagenticllama.workspacePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the PyAgenticLlama workspace/ folder. Leave blank to auto-detect from appUrl."
         },
         "pyagenticllama.autoFocus": {
           "type": "boolean",

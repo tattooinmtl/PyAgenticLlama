@@ -3,7 +3,9 @@ const state = {
   models: [],
   selectedModel: null,
   serverRunning: false,
-  mode: 'chat',          // 'chat' | 'agent'
+  externalProvider: false,   // true when an external API provider is active
+  csOpen: false,             // CodingSpace panel open
+  mode: 'chat',              // 'chat' | 'agent'
   convId: 'default',
   personalityId: 'default',
   personalities: [],
@@ -12,6 +14,9 @@ const state = {
   browserSelected: null,
   currentTps: 0,
 };
+
+// True when something can handle a chat request (local server OR external provider)
+function _canChat() { return state.serverRunning || state.externalProvider; }
 
 // ── API ───────────────────────────────────────────────────────────
 const API = {
@@ -105,6 +110,7 @@ function handleAction(action) {
     case 'open-personalities': openPersonalitiesModal(); break;
     case 'open-mcp':       switchRightTab('mcp'); loadMcpServers(); break;
     case 'new-skill':      openSkillModal(null); break;
+    case 'test-skill':     switchRightTab('skills'); loadSkills(); toast('Pick a skill from the Skills tab and click Run', 'info', 4000); break;
     case 'toggle-agent-mode': setMode(state.mode === 'agent' ? 'chat' : 'agent'); break;
     case 'spawn-agent':    openSpawnModal(); break;
     case 'view-agents':    switchRightTab('agents'); loadAgents(); break;
@@ -305,7 +311,7 @@ async function updateContextBar() {
 }
 
 async function compactContext() {
-  if (!state.serverRunning) { toast('Load a model first', 'error'); return; }
+  if (!_canChat()) { toast('Load a model or set an AI provider (/provider)', 'error'); return; }
   try {
     await API.post(`/api/context/compact?conv_id=${state.convId}&server_name=main`);
     addSystemMessage('Context compacted — old messages summarized');
@@ -360,7 +366,7 @@ async function sendMessage() {
     return;
   }
 
-  if (!state.serverRunning) { toast('Load a model first', 'error'); return; }
+  if (!_canChat()) { toast('Load a model or set an AI provider (/provider)', 'error'); return; }
 
   removeEmptyState();
   appendMessage('user', msg);
@@ -670,6 +676,7 @@ function renderMarkdown(text) {
           <button class="code-btn" onclick="copyCodeBlock('${id}', this)">📋 Copy</button>
           ${isRunnable    ? `<button class="code-btn code-btn-run"     onclick="runCodeBlock('${id}')">▶ Run</button>` : ''}
           ${isPreviewable ? `<button class="code-btn code-btn-preview" onclick="previewCodeBlock('${id}')">👁 Preview</button>` : ''}
+          <button class="code-btn code-btn-cs"     onclick="sendToCS('${id}')"     title="Send to CodingSpace">→ CS</button>
           <button class="code-btn code-btn-vscode" onclick="sendToVSCode('${id}')" title="Send to VS Code as new tab">⌗ VS Code</button>
         </div>
       </div>
@@ -1544,6 +1551,175 @@ CODING RULES:
 5. Imports, dependencies, requirements.txt/package.json must be included when needed
 6. After sending all code blocks, give a brief "How to run" section`;
 
+// ── CodingSpace ───────────────────────────────────────────────────
+
+let _csCurrentFile = null;   // relative path of the file open in editor
+
+async function toggleCodingSpace() {
+  const panel = document.getElementById('cs-panel');
+  state.csOpen = !state.csOpen;
+  panel.classList.toggle('cs-open', state.csOpen);
+  if (state.csOpen) {
+    await csRefreshTree();
+    _csStatus('Workspace ready — drop any code block here with → CS');
+  }
+}
+
+async function csRefreshTree() {
+  try {
+    const info  = await API.get('/api/workspace');
+    document.getElementById('cs-ws-label').textContent = `🗂 ${info.name}`;
+    document.getElementById('cs-ws-label').title = info.path;
+
+    const files = await API.get('/api/workspace/files');
+    const list  = document.getElementById('cs-tree-list');
+    list.innerHTML = '';
+    if (!files.length) {
+      list.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text3)">No files yet</div>';
+      return;
+    }
+    files.forEach(f => {
+      const el = document.createElement('div');
+      el.className = 'cs-tree-item' + (f.path === _csCurrentFile ? ' active' : '');
+      el.textContent = f.path;
+      el.title = f.path;
+      el.onclick = () => csOpenFile(f.path);
+      list.appendChild(el);
+    });
+  } catch (e) { _csStatus('Could not load workspace files', true); }
+}
+
+async function csOpenFile(relPath) {
+  try {
+    const data = await API.get(`/api/workspace/read?path=${encodeURIComponent(relPath)}`);
+    _csCurrentFile = relPath;
+    document.getElementById('cs-filename').value = relPath;
+    document.getElementById('cs-editor').value   = data.content;
+    document.getElementById('cs-delete-btn').style.display = '';
+    _csStatus(`Opened: ${relPath}`);
+    _csHighlightTree(relPath);
+  } catch (e) { _csStatus(`Could not open ${relPath}`, true); }
+}
+
+async function csSave() {
+  const path    = document.getElementById('cs-filename').value.trim();
+  const content = document.getElementById('cs-editor').value;
+  if (!path) { _csStatus('Enter a filename first', true); return; }
+  try {
+    await API.post('/api/workspace/save', { path, content });
+    _csCurrentFile = path;
+    document.getElementById('cs-delete-btn').style.display = '';
+    _csStatus(`Saved: ${path}`);
+    await csRefreshTree();
+  } catch (e) { _csStatus('Save failed: ' + e.message, true); }
+}
+
+async function csDeleteFile() {
+  if (!_csCurrentFile) return;
+  if (!confirm(`Delete ${_csCurrentFile}?`)) return;
+  try {
+    await API.del(`/api/workspace/file?path=${encodeURIComponent(_csCurrentFile)}`);
+    _csCurrentFile = null;
+    document.getElementById('cs-filename').value = '';
+    document.getElementById('cs-editor').value   = '';
+    document.getElementById('cs-delete-btn').style.display = 'none';
+    _csStatus('File deleted');
+    await csRefreshTree();
+  } catch (e) { _csStatus('Delete failed: ' + e.message, true); }
+}
+
+function csNewFile() {
+  _csCurrentFile = null;
+  document.getElementById('cs-filename').value = '';
+  document.getElementById('cs-editor').value   = '';
+  document.getElementById('cs-delete-btn').style.display = 'none';
+  document.getElementById('cs-filename').focus();
+  _csStatus('New file — enter a filename and start coding');
+  _csHighlightTree(null);
+}
+
+async function csOpenInVSCode() {
+  try {
+    await API.post('/api/workspace/open-in-vscode', {});
+    toast('Workspace opened in VS Code', 'success');
+  } catch (e) {
+    // Fallback: try the vscode:// URI scheme (works if VS Code is installed)
+    const info = await API.get('/api/workspace').catch(() => null);
+    if (info?.path) {
+      const uri = 'vscode://file/' + info.path.replace(/\\/g, '/');
+      window.open(uri, '_blank');
+    } else {
+      toast('VS Code extension not connected. Install it from vscode-extension/', 'error', 5000);
+    }
+  }
+}
+
+async function csSendToVSCode() {
+  const code = document.getElementById('cs-editor').value;
+  const path = document.getElementById('cs-filename').value.trim();
+  if (!code) { toast('Editor is empty', 'error'); return; }
+  const ok = await checkVSCode();
+  if (!ok) { toast('VS Code not connected — save the file first, then open in VS Code', 'error', 5000); return; }
+  try {
+    const lang = _extToLang(path.split('.').pop());
+    await API.post('/api/vscode/send', {
+      code,
+      language: lang,
+      project_path: '',
+      filename: path,
+    });
+    toast('Sent to VS Code ✓', 'success');
+  } catch (e) { toast('VS Code send failed: ' + e.message, 'error'); }
+}
+
+// Called by the → CS button on AI code blocks
+function sendToCS(cbId) {
+  const entry = _codeBlockStore[cbId];
+  if (!entry) return;
+
+  // Auto-suggest filename if editor is blank
+  const fnEl = document.getElementById('cs-filename');
+  if (!fnEl.value) {
+    const ext = _langToExt(entry.lang);
+    fnEl.value = `code.${ext}`;
+  }
+  document.getElementById('cs-editor').value = entry.code;
+  document.getElementById('cs-delete-btn').style.display = 'none';
+  _csCurrentFile = null;
+
+  if (!state.csOpen) toggleCodingSpace();
+  else _csStatus(`Code loaded from chat (${entry.lang || 'text'}) — edit and Save`);
+}
+
+// ── CodingSpace helpers ────────────────────────────────────────────
+
+function _csStatus(msg, isError) {
+  const el = document.getElementById('cs-editor-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : 'var(--text3)';
+}
+
+function _csHighlightTree(relPath) {
+  document.querySelectorAll('.cs-tree-item').forEach(el => {
+    el.classList.toggle('active', el.textContent === relPath);
+  });
+}
+
+function _langToExt(lang) {
+  const m = { python:'py', javascript:'js', typescript:'ts', html:'html', css:'css',
+               bash:'sh', sql:'sql', json:'json', yaml:'yaml', rust:'rs', go:'go',
+               java:'java', cpp:'cpp', csharp:'cs', ruby:'rb', php:'php', markdown:'md' };
+  return m[lang] || lang || 'txt';
+}
+
+function _extToLang(ext) {
+  const m = { py:'python', js:'javascript', ts:'typescript', html:'html', css:'css',
+               sh:'bash', sql:'sql', json:'json', yml:'yaml', yaml:'yaml', rs:'rust',
+               go:'go', java:'java', cpp:'cpp', cs:'csharp', rb:'ruby', php:'php', md:'markdown' };
+  return m[ext] || ext || 'text';
+}
+
 // ── Provider ──────────────────────────────────────────────────────
 
 let _parsedProviderCfg = null;
@@ -1664,9 +1840,10 @@ async function confirmProviderFile() {
 }
 
 function _updateProviderBadge(cfg) {
+  state.externalProvider = !!(cfg && cfg.type === 'external');
   const badge = document.getElementById('provider-badge');
   if (!badge) return;
-  if (cfg && cfg.type === 'external') {
+  if (state.externalProvider) {
     badge.textContent = `🔌 ${cfg.name || 'External API'}`;
     badge.style.display = '';
   } else {
@@ -1775,6 +1952,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ═══════════════════════════════════════════════════════════════════
 
 const SLASH_COMMANDS = [
+  { cmd: '/CodingSpace',    desc: 'Toggle split-screen coding panel (chat left, editor + files right)', usage: '/CodingSpace' },
   { cmd: '/provider',       desc: 'Switch AI provider (local, API key, or upload config file)', usage: '/provider' },
   { cmd: '/coding',         desc: 'Start a coding session with project context', usage: '/coding' },
   { cmd: '/validate_skill', desc: 'Validate a skill with AI',                   usage: '/validate_skill <name>' },
@@ -1850,6 +2028,7 @@ async function handleSlashCommand(raw) {
   const args   = parts.slice(1).join(' ').trim();
 
   switch (cmd) {
+    case '/codingspace':    return toggleCodingSpace();
     case '/provider':       return openProviderModal();
     case '/coding':         return openCodingModal();
     case '/validate_skill': return runValidateSkill(args, false);
@@ -1922,7 +2101,7 @@ Follow these rules:
 5. Handle the case where required args are missing`;
 
 async function runValidateSkill(skillName, fixMode) {
-  if (!state.serverRunning) { toast('Load a model first', 'error'); return; }
+  if (!_canChat()) { toast('Load a model or set an AI provider (/provider)', 'error'); return; }
 
   if (!skillName) {
     // Show list of skills to choose from

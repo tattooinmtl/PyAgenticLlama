@@ -18,10 +18,12 @@ from .brain import (remember, recall, all_memories, delete_memory, clear_memorie
 from .vault import set_secret, get_secret, delete_secret, list_keys, set_env_from_vault
 from .personalities import list_personalities, get_personality, save_personality, delete_personality
 
-BASE_DIR  = Path(__file__).parent.parent
-MODELS_DIR = BASE_DIR / 'models'
-SKILLS_DIR = Path(__file__).parent / 'skills'
+BASE_DIR      = Path(__file__).parent.parent
+MODELS_DIR    = BASE_DIR / 'models'
+SKILLS_DIR    = Path(__file__).parent / 'skills'
+WORKSPACE_DIR = BASE_DIR / 'workspace'
 SKILLS_DIR.mkdir(exist_ok=True)
+WORKSPACE_DIR.mkdir(exist_ok=True)
 
 # ── App ───────────────────────────────────────────────────────────
 
@@ -561,6 +563,65 @@ async def compact_ctx(conv_id: str = 'default', server_name: str = 'main'):
 def clear_ctx(conv_id: str = 'default'):
     get_context(conv_id).clear()
     return {'status': 'cleared'}
+
+# ── Workspace ────────────────────────────────────────────────────
+
+class WorkspaceSave(BaseModel):
+    path: str       # relative path inside workspace, e.g. "app.py" or "src/main.js"
+    content: str
+
+def _safe_ws_path(rel: str) -> Path:
+    """Resolve rel to an absolute path guaranteed to stay inside WORKSPACE_DIR."""
+    target = (WORKSPACE_DIR / rel).resolve()
+    if not str(target).startswith(str(WORKSPACE_DIR.resolve())):
+        raise HTTPException(400, 'Path traversal not allowed')
+    return target
+
+@app.get('/api/workspace')
+def workspace_info():
+    return {'path': str(WORKSPACE_DIR), 'name': 'workspace'}
+
+@app.get('/api/workspace/files')
+def workspace_files():
+    result = []
+    for f in sorted(WORKSPACE_DIR.rglob('*')):
+        if f.is_file() and not f.name.startswith('.'):
+            rel = str(f.relative_to(WORKSPACE_DIR)).replace('\\', '/')
+            result.append({'path': rel, 'size': f.stat().st_size,
+                           'ext': f.suffix.lstrip('.')})
+    return result
+
+@app.post('/api/workspace/save')
+def workspace_save(req: WorkspaceSave):
+    target = _safe_ws_path(req.path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(req.content, encoding='utf-8')
+    return {'saved': req.path, 'size': len(req.content)}
+
+@app.get('/api/workspace/read')
+def workspace_read(path: str = Query(...)):
+    target = _safe_ws_path(path)
+    if not target.exists():
+        raise HTTPException(404, 'File not found')
+    return {'content': target.read_text(encoding='utf-8', errors='replace'), 'path': path}
+
+@app.delete('/api/workspace/file')
+def workspace_delete(path: str = Query(...)):
+    target = _safe_ws_path(path)
+    if target.exists():
+        target.unlink()
+    return {'deleted': path}
+
+@app.post('/api/workspace/open-in-vscode')
+async def workspace_open_in_vscode():
+    """Ask the VS Code extension to open the workspace folder."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.post('http://127.0.0.1:3333/open-folder',
+                                  json={'folder': str(WORKSPACE_DIR)})
+            return {'status': 'ok' if r.status_code == 200 else 'error'}
+    except Exception as e:
+        raise HTTPException(503, f'VS Code extension not reachable: {e}')
 
 # ── Skills ────────────────────────────────────────────────────────
 

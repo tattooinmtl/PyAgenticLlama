@@ -63,8 +63,9 @@ function activate(context) {
 
   // Commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('pyagenticllama.showStatus', showStatus),
-    vscode.commands.registerCommand('pyagenticllama.openApp', openApp),
+    vscode.commands.registerCommand('pyagenticllama.showStatus',       showStatus),
+    vscode.commands.registerCommand('pyagenticllama.openApp',          openApp),
+    vscode.commands.registerCommand('pyagenticllama.openWorkspace',    openWorkspace),
     vscode.commands.registerCommand('pyagenticllama.openProjectFolder', openProjectFolder),
   );
 
@@ -202,13 +203,50 @@ function showStatus() {
   const info = _connected
     ? `Connected — ${_receivedCount} file(s) received this session`
     : `Listening on port ${port} — waiting for PyAgenticLlama`;
-  vscode.window.showInformationMessage(`🦙 PyAgenticLlama: ${info}`, 'Open App')
-    .then(choice => { if (choice === 'Open App') openApp(); });
+  vscode.window.showInformationMessage(
+    `🦙 PyAgenticLlama: ${info}`, 'Open App', 'Open Workspace'
+  ).then(choice => {
+    if (choice === 'Open App')       openApp();
+    if (choice === 'Open Workspace') openWorkspace();
+  });
 }
 
 function openApp() {
   const url = vscode.workspace.getConfiguration('pyagenticllama').get('appUrl', 'http://localhost:7860');
   vscode.env.openExternal(vscode.Uri.parse(url));
+}
+
+/**
+ * Open the PyAgenticLlama shared workspace/ folder directly — no file picker.
+ * Path is taken from settings (pyagenticllama.workspacePath) or auto-fetched
+ * from the running app via GET /api/workspace.
+ */
+async function openWorkspace() {
+  const cfg = vscode.workspace.getConfiguration('pyagenticllama');
+  let wsPath = cfg.get('workspacePath', '').trim();
+
+  if (!wsPath) {
+    // Auto-detect: ask the running app for the workspace path
+    try {
+      const appUrl = cfg.get('appUrl', 'http://localhost:7860');
+      const res    = await fetch(`${appUrl}/api/workspace`);
+      if (res.ok) {
+        const data = await res.json();
+        wsPath = data.path || '';
+      }
+    } catch (_) { /* app not running — fall through to error */ }
+  }
+
+  if (!wsPath) {
+    vscode.window.showErrorMessage(
+      'Could not find the PyAgenticLlama workspace folder. ' +
+      'Set pyagenticllama.workspacePath in VS Code settings, or make sure the app is running.'
+    );
+    return;
+  }
+
+  const uri = vscode.Uri.file(wsPath);
+  await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
 }
 
 async function openProjectFolder() {
