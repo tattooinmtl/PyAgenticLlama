@@ -1,4 +1,4 @@
-import asyncio, json, os, uuid
+import asyncio, json, os, uuid, subprocess, sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
@@ -145,7 +145,7 @@ def browse_filesystem(path: str = ''):
                 is_dir = item.is_dir()
                 is_gguf = not is_dir and item.suffix.lower() == '.gguf'
                 stat = item.stat()
-                size_mb = round(stat.st_size / 1024**2, 1) if not is_dir else None
+                size_mb = None if is_dir else round(stat.st_size / 1024**2, 1)
                 entries.append({
                     'name': item.name,
                     'path': str(item),
@@ -507,6 +507,35 @@ async def agent_run(req: AgentRequest):
             ctx.messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': result})
 
     return {'content': 'Max iterations reached', 'trace': trace, 'iterations': req.max_iterations}
+
+# ── Code runner ───────────────────────────────────────────────────
+
+class RunRequest(BaseModel):
+    code: str
+    language: str = 'python'
+
+@app.post('/api/run')
+async def run_code(req: RunRequest):
+    if req.language.lower() not in ('python', 'py'):
+        raise HTTPException(400, 'Only Python execution is currently supported')
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: subprocess.run(
+                [sys.executable, '-c', req.code],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(BASE_DIR),
+            )
+        )
+        return {
+            'stdout': result.stdout,
+            'stderr': result.stderr,
+            'returncode': result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(408, 'Script timed out after 30 seconds')
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 # ── Spawn sub-agents ──────────────────────────────────────────────
 

@@ -210,6 +210,7 @@
         <div class="input-row">
           <textarea id="input-box" placeholder="Message... (Shift+Enter for new line, Enter to send)" rows="1"></textarea>
           <button class="btn btn-primary" id="send-btn" onclick="sendMessage()">Send</button>
+          <button class="btn btn-stop" id="stop-gen-btn" onclick="stopGeneration()" style="display:none" title="Stop generation">■ Stop</button>
         </div>
       </div>
     </main>
@@ -462,6 +463,19 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('log-modal')">Close</button>
       <button class="btn btn-ghost" onclick="loadServerLog()">Refresh</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Code Preview Modal ─────────────────────────────────────── -->
+<div class="modal-overlay" id="preview-modal">
+  <div class="modal-box wide">
+    <div class="modal-title" id="preview-modal-title">👁 Preview</div>
+    <div class="preview-tabs" id="preview-tabs"></div>
+    <div id="preview-content"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('preview-modal')">Close</button>
+      <button class="btn btn-ghost" id="preview-open-btn" onclick="openPreviewExternal()">Open in Browser</button>
     </div>
   </div>
 </div>

@@ -213,16 +213,61 @@ select:focus, input:focus { border-color: var(--accent); }
 .think-block.open .think-body { display: block; }
 
 /* ── Markdown in chat ─────────────────────────────────────────── */
-.msg-bubble pre {
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: 6px; padding: 10px 12px; overflow-x: auto;
-  margin: 6px 0; font-family: var(--mono); font-size: 12px;
+/* ── Rich code blocks ─────────────────────────────────────────── */
+.code-block {
+  background: #0a0c10; border: 1px solid var(--border2);
+  border-radius: 8px; overflow: hidden; margin: 8px 0;
 }
+.code-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; background: var(--surface3);
+  border-bottom: 1px solid var(--border);
+}
+.code-lang {
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  color: var(--cyan); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.code-actions { display: flex; gap: 5px; }
+.code-btn {
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500;
+  cursor: pointer; border: 1px solid var(--border2); background: var(--surface2);
+  color: var(--text2); transition: all 0.15s; white-space: nowrap;
+}
+.code-btn:hover            { background: var(--surface3); color: var(--text); }
+.code-btn.copied           { border-color: var(--green); color: var(--green); }
+.code-btn-run:hover        { border-color: var(--green); color: var(--green); }
+.code-btn-preview:hover    { border-color: var(--accent); color: var(--accent); }
+.code-block pre {
+  margin: 0; padding: 14px 16px; overflow-x: auto;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+}
+.code-block pre code { background: none; padding: 0; color: #c9d1d9; }
+
+/* Inline code (outside code blocks) */
 .msg-bubble code {
   font-family: var(--mono); font-size: 12px;
-  background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px;
+  background: rgba(0,0,0,0.35); padding: 1px 5px; border-radius: 3px;
+  color: var(--cyan);
 }
-.msg-bubble pre code { background: none; padding: 0; }
+
+/* Code output panel */
+.code-output {
+  margin-top: 6px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border);
+}
+.code-output-header {
+  padding: 5px 12px; background: var(--surface3);
+  font-size: 11px; font-weight: 600; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  display: flex; align-items: center; gap: 6px;
+}
+.code-output-body {
+  background: #060810; padding: 10px 14px;
+  font-family: var(--mono); font-size: 12px; line-height: 1.6;
+  color: #c9d1d9; max-height: 280px; overflow-y: auto; white-space: pre-wrap;
+}
+.code-output-body.err { color: var(--red); }
+.code-output-body.ok  { color: var(--green); }
 .msg-bubble p  { margin: 0 0 6px; }
 .msg-bubble p:last-child { margin: 0; }
 .msg-bubble h1,.msg-bubble h2,.msg-bubble h3 { margin: 8px 0 4px; font-weight: 700; }
@@ -240,6 +285,22 @@ select:focus, input:focus { border-color: var(--accent); }
   animation: blink 1s step-end infinite;
 }
 @keyframes blink { 50% { opacity: 0; } }
+
+/* ── Code Preview Modal ───────────────────────────────────────── */
+.preview-iframe {
+  width: 100%; height: 440px; border: none;
+  background: white; border-radius: 6px;
+}
+.preview-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.preview-tab {
+  padding: 4px 12px; border-radius: 5px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border2); background: var(--surface2); color: var(--text2);
+}
+.preview-tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* ── Stop / Send button swap ──────────────────────────────────── */
+.btn-stop { background: var(--red); color: #fff; }
+.btn-stop:hover { filter: brightness(1.1); }
 
 /* ── Input Area ───────────────────────────────────────────────── */
 .input-area {

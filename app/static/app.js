@@ -363,7 +363,8 @@ async function sendMessage() {
 
 async function streamChat(msg) {
   state.streaming = true;
-  document.getElementById('send-btn').disabled = true;
+  _abortCtrl = new AbortController();
+  _setGenerating(true);
 
   const injectMem = document.getElementById('mode-memory').classList.contains('active');
   const { bubble, thinking } = createAssistantBubble();
@@ -380,6 +381,7 @@ async function streamChat(msg) {
   try {
     const resp = await fetch('/api/chat', {
       method: 'POST',
+      signal: _abortCtrl.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: msg,
@@ -466,17 +468,24 @@ async function streamChat(msg) {
     }
   } catch (e) {
     cursor.remove();
-    bubble.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
-    toast('Request failed: ' + e.message, 'error');
+    if (e.name === 'AbortError') {
+      // User hit Stop — render whatever arrived so far
+      if (fullText) renderFinalBubble(bubble, fullText);
+      else bubble.innerHTML = '<em style="color:var(--text3)">Generation stopped.</em>';
+    } else {
+      bubble.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+      toast('Request failed: ' + e.message, 'error');
+    }
   } finally {
+    _abortCtrl = null;
     state.streaming = false;
-    document.getElementById('send-btn').disabled = false;
+    _setGenerating(false);
   }
 }
 
 async function runAgent(msg) {
   state.streaming = true;
-  document.getElementById('send-btn').disabled = true;
+  _setGenerating(true);
 
   const { bubble } = createAssistantBubble();
   bubble.textContent = '⚙️ Working...';
@@ -512,7 +521,7 @@ async function runAgent(msg) {
     toast('Agent failed: ' + e.message, 'error');
   } finally {
     state.streaming = false;
-    document.getElementById('send-btn').disabled = false;
+    _setGenerating(false);
   }
 }
 
@@ -602,14 +611,59 @@ function scrollToBottom() {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
-// ── Markdown renderer (no dependencies) ───────────────────────────
+// ── Stop generation ───────────────────────────────────────────────
+let _abortCtrl = null;
+
+function stopGeneration() {
+  if (_abortCtrl) {
+    _abortCtrl.abort();
+    _abortCtrl = null;
+  }
+}
+
+function _setGenerating(on) {
+  document.getElementById('send-btn').style.display     = on ? 'none' : '';
+  document.getElementById('stop-gen-btn').style.display = on ? '' : 'none';
+}
+
+// ── Code block IDs & storage ──────────────────────────────────────
+let _codeBlockStore = {};
+let _codeBlockCounter = 0;
+
+function _storeCode(lang, code) {
+  const id = 'cb' + (++_codeBlockCounter);
+  _codeBlockStore[id] = { lang, code };
+  return id;
+}
+
+// ── Markdown renderer ─────────────────────────────────────────────
 function renderMarkdown(text) {
   if (!text) return '';
-  // Code blocks
-  let html = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code>${escHtml(code.trimEnd())}</code></pre>`);
+
+  // ── Fenced code blocks — rendered as rich interactive blocks ────
+  let html = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    lang = (lang || 'text').toLowerCase();
+    code = code.trimEnd();
+    const id   = _storeCode(lang, code);
+    const esc  = escHtml(code);
+    const isRunnable  = ['python', 'py'].includes(lang);
+    const isPreviewable = ['html', 'javascript', 'js', 'css', 'jsx', 'tsx', 'svg'].includes(lang);
+
+    return `<div class="code-block" data-cbid="${id}">
+      <div class="code-header">
+        <span class="code-lang">${escHtml(lang)}</span>
+        <div class="code-actions">
+          <button class="code-btn" onclick="copyCodeBlock('${id}', this)">📋 Copy</button>
+          ${isRunnable  ? `<button class="code-btn code-btn-run"     onclick="runCodeBlock('${id}')">▶ Run</button>` : ''}
+          ${isPreviewable ? `<button class="code-btn code-btn-preview" onclick="previewCodeBlock('${id}')">👁 Preview</button>` : ''}
+        </div>
+      </div>
+      <pre><code>${esc}</code></pre>
+    </div>`;
+  });
+
   // Inline code
-  html = html.replace(/`([^`]+)`/g, (_, c) => `<code>${escHtml(c)}</code>`);
+  html = html.replace(/`([^`\n]+)`/g, (_, c) => `<code>${escHtml(c)}</code>`);
   // Bold / italic
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
@@ -617,27 +671,152 @@ function renderMarkdown(text) {
   html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
   html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
   html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  // Table (basic)
+  // Tables (basic)
   html = html.replace(/^\|(.+)\|$/gm, (line) => {
     if (/^[\|\s\-:]+$/.test(line)) return '';
-    const cells = line.split('|').slice(1, -1).map(c => `<td>${c.trim()}</td>`).join('');
+    const cells = line.split('|').slice(1,-1).map(c=>`<td>${c.trim()}</td>`).join('');
     return `<tr>${cells}</tr>`;
   });
-  html = html.replace(/(<tr>.*<\/tr>)/gs, '<table>$1</table>');
+  html = html.replace(/(<tr>[\s\S]*?<\/tr>)/g, '<table>$1</table>');
   // Lists
   html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
-  // Paragraphs
+  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+  // Paragraphs — skip lines that are already block elements
   const parts = html.split(/\n{2,}/);
   html = parts.map(p => {
-    if (p.startsWith('<')) return p;
-    return `<p>${p.replace(/\n/g, '<br>')}</p>`;
-  }).join('');
+    const t = p.trim();
+    if (!t) return '';
+    if (/^<(div|pre|ul|ol|table|h[1-6]|blockquote)/.test(t)) return t;
+    return `<p>${t.replace(/\n/g, '<br>')}</p>`;
+  }).join('\n');
+
   return html;
 }
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Copy code block ────────────────────────────────────────────────
+function copyCodeBlock(id, btn) {
+  const entry = _codeBlockStore[id];
+  if (!entry) return;
+  navigator.clipboard.writeText(entry.code).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 2000);
+  }).catch(() => {
+    // Fallback for browsers without clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = entry.code;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    btn.textContent = '✓ Copied';
+    setTimeout(() => btn.textContent = '📋 Copy', 2000);
+  });
+}
+
+// ── Run Python code ────────────────────────────────────────────────
+async function runCodeBlock(id) {
+  const entry = _codeBlockStore[id];
+  if (!entry) return;
+
+  // Find or create the output panel below this code block
+  const blockEl = document.querySelector(`.code-block[data-cbid="${id}"]`);
+  let out = blockEl?.nextElementSibling;
+  if (!out || !out.classList.contains('code-output')) {
+    out = document.createElement('div');
+    out.className = 'code-output';
+    out.innerHTML = `
+      <div class="code-output-header"><span class="spinner"></span> Running...</div>
+      <div class="code-output-body"></div>`;
+    blockEl?.insertAdjacentElement('afterend', out);
+  }
+  const header = out.querySelector('.code-output-header');
+  const body   = out.querySelector('.code-output-body');
+  header.innerHTML = '<span class="spinner"></span> Running...';
+  body.textContent = '';
+  body.className   = 'code-output-body';
+
+  try {
+    const result = await API.post('/api/run', { code: entry.code, language: entry.lang });
+    const hasErr = result.returncode !== 0 || result.stderr;
+    header.innerHTML = hasErr
+      ? `<span style="color:var(--red)">✗ Error (exit ${result.returncode})</span>`
+      : `<span style="color:var(--green)">✓ Finished</span>`;
+    body.textContent = (result.stdout || '') + (result.stderr ? '\n' + result.stderr : '') || '(no output)';
+    body.className   = 'code-output-body' + (hasErr ? ' err' : ' ok');
+  } catch (e) {
+    header.innerHTML = `<span style="color:var(--red)">✗ Failed</span>`;
+    body.textContent = e.message;
+    body.className   = 'code-output-body err';
+  }
+}
+
+// ── Preview HTML/JS/CSS ────────────────────────────────────────────
+let _previewBlobUrl = null;
+
+function previewCodeBlock(id) {
+  const entry = _codeBlockStore[id];
+  if (!entry) return;
+  openPreviewModal(entry.code, entry.lang, id);
+}
+
+function openPreviewModal(code, lang, id) {
+  const title = document.getElementById('preview-modal-title');
+  const tabs  = document.getElementById('preview-tabs');
+  const content = document.getElementById('preview-content');
+
+  title.textContent = `👁 Preview — ${lang}`;
+  tabs.innerHTML = '';
+  content.innerHTML = '';
+
+  if (['html', 'svg'].includes(lang)) {
+    // Render directly in iframe
+    _showHtmlPreview(content, code);
+    document.getElementById('preview-open-btn').style.display = '';
+  } else if (['css'].includes(lang)) {
+    // Wrap in minimal HTML to preview CSS
+    const wrapped = `<!DOCTYPE html><html><head><style>${code}</style></head><body>
+      <h1>Heading</h1><p>Paragraph text.</p><a href="#">Link</a>
+      <button>Button</button><input placeholder="Input"><ul><li>Item 1</li><li>Item 2</li></ul>
+    </body></html>`;
+    _showHtmlPreview(content, wrapped);
+  } else if (['javascript', 'js'].includes(lang)) {
+    // Wrap JS in a page with a console capture
+    const wrapped = `<!DOCTYPE html><html><head><style>body{font-family:monospace;background:#0a0c10;color:#c9d1d9;padding:12px}</style></head><body>
+      <div id="output"></div>
+      <script>
+        const _out = document.getElementById('output');
+        const _log = console.log.bind(console);
+        console.log = (...args) => { _out.innerHTML += '<div>' + args.map(a=>JSON.stringify(a)??String(a)).join(' ') + '</div>'; _log(...args); };
+        try { ${code} } catch(e) { _out.innerHTML += '<div style="color:red">Error: ' + e.message + '</div>'; }
+      <\/script></body></html>`;
+    _showHtmlPreview(content, wrapped);
+  } else {
+    content.innerHTML = `<pre style="background:var(--bg);padding:12px;border-radius:6px;font-family:var(--mono);font-size:12px;overflow-x:auto;max-height:400px">${escHtml(code)}</pre>`;
+    document.getElementById('preview-open-btn').style.display = 'none';
+  }
+
+  openModal('preview-modal');
+}
+
+function _showHtmlPreview(container, html) {
+  if (_previewBlobUrl) URL.revokeObjectURL(_previewBlobUrl);
+  const blob = new Blob([html], { type: 'text/html' });
+  _previewBlobUrl = URL.createObjectURL(blob);
+  const iframe = document.createElement('iframe');
+  iframe.className = 'preview-iframe';
+  iframe.src = _previewBlobUrl;
+  iframe.sandbox = 'allow-scripts';
+  container.appendChild(iframe);
+}
+
+function openPreviewExternal() {
+  if (_previewBlobUrl) window.open(_previewBlobUrl, '_blank');
 }
 
 // ── Skills ────────────────────────────────────────────────────────
