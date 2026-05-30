@@ -1,0 +1,31 @@
+# Encrypted secrets and personal data — never commit these
+data/vault.enc
+data/brain.db
+
+# Server logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# llama.cpp binaries — too large for git
+llama.cpp/
+llamaVulkan/
+
+# Models — too large for git
+models/
+
+# Personality user data — kept local
+app/personalities/*.json
+
+# Skill user data — kept local (users create their own)
+# Uncomment if you want to share your skills:
+# app/skills/*.json
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
