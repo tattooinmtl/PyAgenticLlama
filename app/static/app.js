@@ -1447,6 +1447,287 @@ function startPolling() {
   setInterval(() => { if (state.serverRunning) updateContextBar(); }, 10000);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ── Floating Windows ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+class FloatWin {
+  constructor({ id, btnId, defaultRight, defaultBottom, defaultWidth, defaultHeight }) {
+    this.el      = document.getElementById(id);
+    this.btnEl   = document.getElementById(btnId);
+    this.body    = this.el.querySelector('.float-body');
+    this._docked = false;
+    this._minimized = false;
+
+    // Set default position via CSS vars already on the element
+    this._initDrag();
+    this._initResize();
+  }
+
+  // ── Visibility ─────────────────────────────────────────────────
+  toggle() {
+    const on = this.el.classList.toggle('visible');
+    this.btnEl?.classList.toggle('win-btn-on', on);
+    if (on) this._onOpen();
+  }
+
+  get visible() { return this.el.classList.contains('visible'); }
+
+  // ── Minimize ───────────────────────────────────────────────────
+  minimize() {
+    this._minimized = !this._minimized;
+    this.el.classList.toggle('minimized', this._minimized);
+    const btn = this.el.querySelector('[id$="-min-btn"]') ||
+                this.el.querySelectorAll('.float-btn')[1];
+    if (btn) btn.textContent = this._minimized ? '□' : '─';
+  }
+
+  // ── Clear body ─────────────────────────────────────────────────
+  clearBody() {
+    this.body.innerHTML = '';
+  }
+
+  // ── Dock / Undock ──────────────────────────────────────────────
+  toggleDock() {
+    const area   = document.getElementById('float-dock-area');
+    const dockBtn = this.el.querySelector('[id$="-dock-btn"]') ||
+                    this.el.querySelectorAll('.float-btn')[2];
+
+    if (!this._docked) {
+      // Move into dock area
+      this._savedStyle = {
+        left: this.el.style.left, top: this.el.style.top,
+        right: this.el.style.right, bottom: this.el.style.bottom,
+        width: this.el.style.width, height: this.el.style.height,
+      };
+      this.el.classList.add('docked');
+      area.appendChild(this.el);
+      area.style.display = 'flex';
+      this.el.style.cssText = '';   // let .docked class take over
+      this.el.classList.add('docked', 'visible');
+      if (dockBtn) { dockBtn.textContent = '⊟'; dockBtn.title = 'Undock'; }
+      this._docked = true;
+    } else {
+      // Return to floating
+      this.el.classList.remove('docked');
+      document.body.appendChild(this.el);
+      const s = this._savedStyle || {};
+      this.el.style.right  = s.right  || '20px';
+      this.el.style.bottom = s.bottom || '20px';
+      this.el.style.left   = s.left   || '';
+      this.el.style.top    = s.top    || '';
+      this.el.style.width  = s.width  || '600px';
+      this.el.style.height = s.height || '320px';
+      if (dockBtn) { dockBtn.textContent = '⊞'; dockBtn.title = 'Dock'; }
+      this._docked = false;
+      // Hide area if empty
+      if (!area.children.length) area.style.display = 'none';
+    }
+  }
+
+  // ── Drag ───────────────────────────────────────────────────────
+  _initDrag() {
+    const handle = this.el.querySelector('.float-title');
+    let sx, sy, sl, st;
+    handle.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button') || this._docked) return;
+      // Convert right/bottom to left/top for easier math
+      const rect = this.el.getBoundingClientRect();
+      this.el.style.left   = rect.left + 'px';
+      this.el.style.top    = rect.top  + 'px';
+      this.el.style.right  = 'auto';
+      this.el.style.bottom = 'auto';
+      sx = e.clientX; sy = e.clientY;
+      sl = rect.left;  st = rect.top;
+      this.el.style.transition = 'none';
+      this.el.style.zIndex = '460';
+
+      const move = (e) => {
+        let nx = sl + e.clientX - sx;
+        let ny = st + e.clientY - sy;
+        // Clamp to viewport
+        nx = Math.max(0, Math.min(nx, window.innerWidth  - 60));
+        ny = Math.max(0, Math.min(ny, window.innerHeight - 40));
+        this.el.style.left = nx + 'px';
+        this.el.style.top  = ny + 'px';
+      };
+      const up = () => {
+        this.el.style.transition = '';
+        this.el.style.zIndex = '450';
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+      e.preventDefault();
+    });
+  }
+
+  // ── Native resize (HTML resize attr) ──────────────────────────
+  _initResize() {
+    if (!this._docked) this.el.style.overflow = 'hidden';
+    this.el.style.resize = 'both';
+  }
+
+  // Override in subclasses
+  _onOpen() {}
+
+  // ── Append line to body, auto-scroll ──────────────────────────
+  appendLine(html) {
+    const atBottom = this.body.scrollHeight - this.body.scrollTop <= this.body.clientHeight + 4;
+    const line = document.createElement('div');
+    line.innerHTML = html;
+    this.body.appendChild(line);
+    if (atBottom) this.body.scrollTop = this.body.scrollHeight;
+  }
+
+  appendText(text) {
+    this.appendLine(escHtml(text));
+  }
+}
+
+// ── Console window ─────────────────────────────────────────────────
+class ConsoleWin extends FloatWin {
+  constructor(opts) {
+    super(opts);
+    this._pollIdx  = 0;
+    this._pollTimer = null;
+  }
+
+  _onOpen() {
+    this._startPolling();
+  }
+
+  _startPolling() {
+    if (this._pollTimer) return;
+    this._pollTimer = setInterval(() => this._poll(), 1500);
+    this._poll();  // immediate first fetch
+  }
+
+  _stopPolling() {
+    clearInterval(this._pollTimer);
+    this._pollTimer = null;
+  }
+
+  toggle() {
+    super.toggle();
+    if (!this.visible) this._stopPolling();
+  }
+
+  clearBody() {
+    super.clearBody();
+    this._pollIdx = 0;
+  }
+
+  async _poll() {
+    if (!this.visible) return;
+    try {
+      const data = await API.get(`/api/console/lines?after=${this._pollIdx}`);
+      if (data.lines && data.lines.length) {
+        data.lines.forEach(line => this.appendLine(this._colorLine(line)));
+        this._pollIdx = data.total;
+      }
+    } catch (e) { /* silent */ }
+  }
+
+  _colorLine(raw) {
+    const e = escHtml(raw);
+    if (/error|fail|fatal/i.test(raw))   return `<span class="log-err">${e}</span>`;
+    if (/warn/i.test(raw))               return `<span class="log-warn">${e}</span>`;
+    if (/loaded|ready|success|ok/i.test(raw)) return `<span class="log-ok">${e}</span>`;
+    if (/^[.\s]*$/.test(raw) || raw.length < 3) return `<span class="log-dim">${e}</span>`;
+    return `<span class="log-info">${e}</span>`;
+  }
+}
+
+// ── Terminal window ────────────────────────────────────────────────
+class TerminalWin extends FloatWin {
+  constructor(opts) {
+    super(opts);
+    this._cwd     = '';
+    this._history = [];   // command history
+    this._histIdx = -1;   // arrow-key position
+    this._busy    = false;
+
+    const inp = document.getElementById('terminal-input');
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')      { e.preventDefault(); terminalRun(); }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); this._histNav(-1); }
+      if (e.key === 'ArrowDown')  { e.preventDefault(); this._histNav(+1); }
+    });
+  }
+
+  _histNav(dir) {
+    const inp = document.getElementById('terminal-input');
+    this._histIdx = Math.max(-1, Math.min(this._history.length - 1, this._histIdx + dir));
+    inp.value = this._histIdx >= 0 ? this._history[this._histIdx] : '';
+  }
+
+  _onOpen() {
+    // Load current working directory on first open
+    if (!this._cwd) {
+      API.get('/api/terminal/cwd')
+        .then(d => this._setCwd(d.cwd))
+        .catch(() => {});
+    }
+    document.getElementById('terminal-input').focus();
+  }
+
+  _setCwd(cwd) {
+    this._cwd = cwd;
+    // Show only last 2 path segments for brevity
+    const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+    const short = parts.slice(-2).join('/');
+    document.getElementById('terminal-cwd-label').textContent = cwd;
+    document.getElementById('terminal-prompt').textContent = `${short}>`;
+  }
+
+  async exec(cmd) {
+    if (this._busy || !cmd.trim()) return;
+    this._busy = true;
+
+    // Add to history (skip duplicates at top)
+    if (cmd.trim() && this._history[0] !== cmd) this._history.unshift(cmd);
+    if (this._history.length > 100) this._history.pop();
+    this._histIdx = -1;
+
+    // Echo the command
+    const parts = this._cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+    const short = parts.slice(-2).join('/');
+    this.appendLine(`<span class="term-prompt">${escHtml(short)}&gt;</span> <span class="term-cmd">${escHtml(cmd)}</span>`);
+
+    try {
+      const res = await API.post('/api/terminal/exec', { command: cmd });
+      if (res.output) {
+        const cls = res.returncode !== 0 ? 'term-err' : 'term-out';
+        res.output.split('\n').forEach(l => {
+          if (l !== '') this.appendLine(`<span class="${cls}">${escHtml(l)}</span>`);
+        });
+      }
+      if (res.cwd) this._setCwd(res.cwd);
+    } catch (e) {
+      this.appendLine(`<span class="term-err">Error: ${escHtml(e.message)}</span>`);
+    } finally {
+      this._busy = false;
+      document.getElementById('terminal-input').focus();
+    }
+  }
+}
+
+// ── Instantiate windows ────────────────────────────────────────────
+const floatWins = {
+  console:  new ConsoleWin({ id: 'float-console',  btnId: 'console-btn' }),
+  terminal: new TerminalWin({ id: 'float-terminal', btnId: 'terminal-btn' }),
+};
+
+// ── Global terminal run helper (called by button + Enter key) ────
+async function terminalRun() {
+  const inp = document.getElementById('terminal-input');
+  const cmd = inp.value;
+  inp.value = '';
+  await floatWins.terminal.exec(cmd);
+}
+
 // ── Boot ──────────────────────────────────────────────────────────
 async function init() {
   initMenuBar();

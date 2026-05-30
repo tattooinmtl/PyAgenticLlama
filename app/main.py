@@ -508,6 +508,69 @@ async def agent_run(req: AgentRequest):
 
     return {'content': 'Max iterations reached', 'trace': trace, 'iterations': req.max_iterations}
 
+# ── Console log polling ───────────────────────────────────────────
+
+@app.get('/api/console/lines')
+def console_lines(name: str = 'main', after: int = 0):
+    """Return log lines starting from `after` index. Frontend polls this."""
+    log_path = BASE_DIR / f'llama-{name}.log'
+    if not log_path.exists():
+        return {'lines': [], 'total': 0}
+    try:
+        lines = log_path.read_text(errors='replace').splitlines()
+        return {'lines': lines[after:], 'total': len(lines)}
+    except Exception:
+        return {'lines': [], 'total': 0}
+
+# ── Terminal ───────────────────────────────────────────────────────
+
+_term_cwd = str(BASE_DIR)   # Persistent working directory across commands
+_term_history: list[str] = []  # Keep last 200 lines of session output
+
+class TermCmd(BaseModel):
+    command: str
+
+@app.post('/api/terminal/exec')
+async def terminal_exec(req: TermCmd):
+    global _term_cwd
+    cmd = req.command.strip()
+    if not cmd:
+        return {'output': '', 'cwd': _term_cwd, 'returncode': 0}
+
+    # Handle cd ourselves so directory persists across calls
+    if cmd.lower().startswith('cd') and (len(cmd) == 2 or cmd[2] in (' ', '\t')):
+        target = cmd[2:].strip() or str(Path.home())
+        try:
+            new = Path(_term_cwd) / target
+            new = new.resolve()
+            if new.is_dir():
+                _term_cwd = str(new)
+                return {'output': '', 'cwd': _term_cwd, 'returncode': 0}
+            return {'output': f"cd: path not found: {target}", 'cwd': _term_cwd, 'returncode': 1}
+        except Exception as e:
+            return {'output': str(e), 'cwd': _term_cwd, 'returncode': 1}
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: subprocess.run(
+                cmd, shell=True,
+                capture_output=True, text=True,
+                timeout=60, cwd=_term_cwd,
+                encoding='utf-8', errors='replace',
+            )
+        )
+        out = (result.stdout or '') + (result.stderr or '')
+        return {'output': out, 'cwd': _term_cwd, 'returncode': result.returncode}
+    except subprocess.TimeoutExpired:
+        return {'output': 'Timed out after 60 seconds.', 'cwd': _term_cwd, 'returncode': -1}
+    except Exception as e:
+        return {'output': str(e), 'cwd': _term_cwd, 'returncode': -1}
+
+@app.get('/api/terminal/cwd')
+def get_term_cwd():
+    return {'cwd': _term_cwd}
+
 # ── Code runner ───────────────────────────────────────────────────
 
 class RunRequest(BaseModel):

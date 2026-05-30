@@ -470,3 +470,113 @@ select:focus, input:focus { border-color: var(--accent); }
 .inspector-stat-val   { font-size: 1.4em; font-weight: 700; font-family: var(--mono); color: var(--text); }
 .inspector-stat-label { font-size: 10px; color: var(--text3); margin-top: 2px; }
 .template-box { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; font-family: var(--mono); font-size: 10px; color: var(--text2); max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+
+/* ── Floating Windows ─────────────────────────────────────────── */
+.float-win {
+  position: fixed;
+  z-index: 450;
+  display: none;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.65);
+  overflow: hidden;
+  min-width: 320px;
+  min-height: 180px;
+  /* default size — overridden per window */
+}
+.float-win.visible { display: flex; }
+.float-win.minimized .float-body,
+.float-win.minimized .float-input-row { display: none !important; }
+
+/* Docked: lives inside the right-panel dock area */
+.float-win.docked {
+  position: relative !important;
+  left: auto !important; top: auto !important;
+  right: auto !important; bottom: auto !important;
+  width: 100% !important;
+  border-radius: 0;
+  border-left: none; border-right: none; border-bottom: none;
+  box-shadow: none;
+  min-height: 160px;
+}
+
+/* Title bar — drag handle */
+.float-title {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; flex-shrink: 0;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  cursor: grab; user-select: none;
+}
+.float-title:active { cursor: grabbing; }
+.float-win.docked .float-title { cursor: default; }
+.float-title-icon { font-size: 14px; }
+.float-title-label { font-size: 12px; font-weight: 700; flex: 1; color: var(--text); }
+.float-title-cwd   { font-size: 10px; color: var(--text3); font-family: var(--mono); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-ctrl { display: flex; gap: 3px; }
+.float-btn {
+  width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--border2);
+  background: var(--surface3); color: var(--text2); font-size: 11px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.12s; flex-shrink: 0;
+}
+.float-btn:hover { background: var(--border2); color: var(--text); }
+.float-btn.close:hover { background: var(--red); border-color: var(--red); color: #fff; }
+
+/* Scrollable output body */
+.float-body {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  background: #060810; color: #c9d1d9;
+  padding: 8px 12px; white-space: pre-wrap; word-break: break-word;
+}
+.float-body .log-info   { color: #c9d1d9; }
+.float-body .log-ok     { color: var(--green); }
+.float-body .log-warn   { color: var(--yellow); }
+.float-body .log-err    { color: var(--red); }
+.float-body .log-dim    { color: var(--text3); }
+.float-body .term-cmd   { color: var(--accent); }
+.float-body .term-out   { color: #c9d1d9; }
+.float-body .term-err   { color: var(--red); }
+.float-body .term-prompt { color: var(--green); font-weight: 600; }
+
+/* Terminal input row */
+.float-input-row {
+  display: flex; align-items: center; gap: 0;
+  border-top: 1px solid var(--border); flex-shrink: 0;
+  background: #060810;
+}
+.float-prompt-label {
+  padding: 7px 0 7px 10px; font-family: var(--mono);
+  font-size: 12px; color: var(--green); white-space: nowrap; flex-shrink: 0;
+}
+.float-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  font-family: var(--mono); font-size: 12px; color: #c9d1d9;
+  padding: 7px 8px; caret-color: var(--green);
+}
+.float-run-btn {
+  padding: 4px 10px; font-size: 11px; background: transparent;
+  border: none; border-left: 1px solid var(--border);
+  color: var(--text3); cursor: pointer; flex-shrink: 0;
+}
+.float-run-btn:hover { color: var(--green); }
+
+/* Dock area at bottom of right panel */
+.float-dock-area {
+  border-top: 2px solid var(--accent-dim);
+  flex-shrink: 0;
+  display: flex; flex-direction: column;
+}
+
+/* Console/Terminal open buttons in context bar */
+.win-btn {
+  padding: 3px 8px; font-size: 11px; font-weight: 600;
+  border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--border2); background: var(--surface2);
+  color: var(--text2); transition: all 0.12s;
+}
+.win-btn:hover        { background: var(--surface3); color: var(--text); }
+.win-btn.win-btn-on   { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }

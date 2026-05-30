@@ -189,6 +189,10 @@
         <span class="tps-badge" id="tps-badge" style="display:none">0 t/s</span>
         <button class="btn btn-ghost btn-sm" onclick="compactContext()" title="Compact context">⚡ Compact</button>
         <button class="btn btn-ghost btn-sm" onclick="clearContext()" title="Clear context">✕</button>
+        <div style="margin-left:4px; display:flex; gap:4px">
+          <button class="win-btn" id="console-btn" onclick="floatWins.console.toggle()" title="Toggle Console">📋 Console</button>
+          <button class="win-btn" id="terminal-btn" onclick="floatWins.terminal.toggle()" title="Toggle Terminal">💻 Terminal</button>
+        </div>
       </div>
 
       <!-- Messages -->
@@ -239,7 +243,49 @@
       <div class="panel-content" data-tab="history" id="tab-history">
         <div id="history-list" style="display:flex; flex-direction:column; gap:5px"></div>
       </div>
+
+      <!-- Dock area — windows snap here when docked -->
+      <div class="float-dock-area" id="float-dock-area" style="display:none"></div>
     </aside>
+  </div>
+</div>
+
+<!-- ── Console Floating Window ────────────────────────────────── -->
+<div class="float-win" id="float-console"
+     style="width:600px; height:320px; right:20px; bottom:20px">
+  <div class="float-title" id="float-console-title">
+    <span class="float-title-icon">📋</span>
+    <span class="float-title-label">Console</span>
+    <span class="float-title-cwd" id="console-server-name">llama-main.log</span>
+    <div class="float-ctrl">
+      <button class="float-btn" title="Clear" onclick="floatWins.console.clearBody()">⊘</button>
+      <button class="float-btn" title="Minimize" onclick="floatWins.console.minimize()" id="console-min-btn">─</button>
+      <button class="float-btn" title="Dock / Undock" onclick="floatWins.console.toggleDock()" id="console-dock-btn">⊞</button>
+      <button class="float-btn close" title="Close" onclick="floatWins.console.toggle()">✕</button>
+    </div>
+  </div>
+  <div class="float-body" id="console-body"></div>
+</div>
+
+<!-- ── Terminal Floating Window ───────────────────────────────── -->
+<div class="float-win" id="float-terminal"
+     style="width:600px; height:340px; right:640px; bottom:20px">
+  <div class="float-title" id="float-terminal-title">
+    <span class="float-title-icon">💻</span>
+    <span class="float-title-label">Terminal</span>
+    <span class="float-title-cwd" id="terminal-cwd-label">…</span>
+    <div class="float-ctrl">
+      <button class="float-btn" title="Clear" onclick="floatWins.terminal.clearBody()">⊘</button>
+      <button class="float-btn" title="Minimize" onclick="floatWins.terminal.minimize()" id="terminal-min-btn">─</button>
+      <button class="float-btn" title="Dock / Undock" onclick="floatWins.terminal.toggleDock()" id="terminal-dock-btn">⊞</button>
+      <button class="float-btn close" title="Close" onclick="floatWins.terminal.toggle()">✕</button>
+    </div>
+  </div>
+  <div class="float-body" id="terminal-body"></div>
+  <div class="float-input-row" id="terminal-input-row">
+    <span class="float-prompt-label" id="terminal-prompt">PS&gt;</span>
+    <input class="float-input" id="terminal-input" placeholder="Enter command…" autocomplete="off" spellcheck="false">
+    <button class="float-run-btn" onclick="terminalRun()">↵</button>
   </div>
 </div>
 
