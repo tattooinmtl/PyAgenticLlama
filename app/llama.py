@@ -2,7 +2,7 @@ import asyncio, httpx
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
-SERVER_EXE = BASE_DIR / 'llamaVulkan' / 'llama-server.exe'
+SERVER_EXE = BASE_DIR / 'llama_exec' / 'llama-server.exe'
 
 class LlamaServer:
     def __init__(self, port: int = 8080, name: str = 'main'):

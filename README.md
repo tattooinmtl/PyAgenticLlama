@@ -75,7 +75,7 @@ Create unlimited custom personalities with avatar color, icon, system prompt, te
 
 - **Windows 10/11**
 - **Python 3.10+** (tested on 3.14)
-- **llama.cpp binaries** — place in `llamaVulkan/` (Vulkan build recommended for AMD/Intel GPUs)
+- **llama.cpp binaries** — place in `llama_exec/` (Vulkan build recommended for AMD/Intel GPUs)
 - At least one `.gguf` model
 
 ---
@@ -88,7 +88,7 @@ git clone https://github.com/tattooinmtl/PyAgenticLlama.git
 cd PyAgenticLlama
 
 # 2. Add your llama.cpp binaries
-#    Copy llama-server.exe and its DLLs into llamaVulkan/
+#    Copy llama-server.exe and its DLLs into llama_exec/
 
 # 3. Add a model
 #    Copy any .gguf file into models/
@@ -110,7 +110,7 @@ Download a pre-built release from [llama.cpp releases](https://github.com/ggerga
 - **NVIDIA GPU (CUDA):** download the `cuda` build
 - **CPU only:** download the `win-noavx` or `avx2` build
 
-Extract and place all files (`llama-server.exe`, `*.dll`) into the `llamaVulkan/` folder.
+Extract and place all files (`llama-server.exe`, `*.dll`) into the `llama_exec/` folder.
 
 ---
 
@@ -166,7 +166,7 @@ PyAgenticLlama/
 ├── data/                 # Runtime data (gitignored)
 │   ├── brain.db          # SQLite memory database
 │   └── vault.enc         # Encrypted secrets
-├── llamaVulkan/          # llama.cpp binaries (gitignored — add your own)
+├── llama_exec/          # llama.cpp binaries (gitignored — add your own)
 ├── models/               # GGUF model files (gitignored — add your own)
 ├── requirements.txt
 └── start-app.bat

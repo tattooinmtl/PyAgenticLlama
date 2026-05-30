@@ -12,7 +12,7 @@ __pycache__/
 
 # llama.cpp binaries — too large for git
 llama.cpp/
-llamaVulkan/
+llama_exec/
 
 # Models — too large for git
 models/
