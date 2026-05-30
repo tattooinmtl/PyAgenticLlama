@@ -1,0 +1,34 @@
+{
+  "id": "CrawlerPlus",
+  "name": "Crawlerplus",
+  "description": "CrawlerPlus \u2014 deep semantic web search skill.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "query"
+      },
+      "top_k": {
+        "type": "integer",
+        "description": "top_k"
+      },
+      "max_pages": {
+        "type": "integer",
+        "description": "max_pages"
+      },
+      "chunk_size": {
+        "type": "integer",
+        "description": "chunk_size"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "action_type": "python",
+  "code": "",
+  "py_file": "CrawlerPlus.py",
+  "webhook_url": "",
+  "enabled": true
+}

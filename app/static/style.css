@@ -1,5 +1,50 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Splash Screen ────────────────────────────────────────────── */
+#splash-screen {
+  position: fixed; inset: 0; z-index: 9999;
+  background: #0b0d12;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 30px;
+  transition: opacity 0.75s ease;
+}
+#splash-screen.fade-out { opacity: 0; pointer-events: none; }
+
+#splash-logo {
+  max-width: min(380px, 58vw);
+  max-height: 210px;
+  object-fit: contain;
+  animation: splash-glow 2.8s ease-in-out infinite;
+}
+@keyframes splash-glow {
+  0%, 100% { filter: drop-shadow(0 0 14px rgba(57,255,20,.18)); }
+  50%       { filter: drop-shadow(0 0 34px rgba(57,255,20,.45)); }
+}
+
+#splash-terminal {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12.5px;
+  color: #4afa4a;
+  width: min(540px, 88vw);
+  background: rgba(0,0,0,.55);
+  border: 1px solid #1c3a1c;
+  border-radius: 8px;
+  padding: 14px 18px;
+  max-height: 230px;
+  overflow-y: auto;
+  box-shadow: 0 0 28px rgba(57,255,20,.07), inset 0 0 40px rgba(0,0,0,.35);
+}
+#splash-terminal::-webkit-scrollbar { width: 4px; }
+#splash-terminal::-webkit-scrollbar-thumb { background: #1c3a1c; border-radius: 2px; }
+
+.splash-line { line-height: 1.7; }
+.splash-line .s-ok   { color: #4afa4a; }
+.splash-line .s-warn { color: #f0c040; }
+.splash-line .s-info { color: #7ec8e3; }
+#splash-cursor-line { height: 1.7em; }
+#splash-cursor { animation: cur-blink .85s step-end infinite; }
+@keyframes cur-blink { 50% { opacity: 0; } }
+
 :root {
   --bg:          #0b0d12;
   --surface:     #10131a;
@@ -438,8 +483,42 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 .modal-box.wide { width: 740px; }
 .modal-box.narrow { width: 400px; }
+/* File browser always renders above any other open modal (e.g. coding session) */
+#browser-modal { z-index: 400; }
 .modal-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .modal-footer { display: flex; gap: 8px; justify-content: flex-end; padding-top: 4px; }
+
+/* ── Provider modal ───────────────────────────────────────────── */
+.provider-tabs {
+  display: flex; gap: 2px;
+  border-bottom: 1px solid var(--border); margin-bottom: 14px;
+}
+.provider-tab {
+  padding: 6px 16px; background: transparent; border: none;
+  color: var(--text2); cursor: pointer; font-size: 13px; font-weight: 500;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  border-radius: 6px 6px 0 0; transition: color .15s;
+}
+.provider-tab:hover { color: var(--text); }
+.provider-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.file-dropzone {
+  border: 2px dashed var(--border2); border-radius: 10px;
+  padding: 26px 18px; text-align: center; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.file-dropzone:hover, .file-dropzone.drag-over {
+  border-color: var(--accent); background: rgba(124,58,237,.06);
+}
+
+/* Badge in menubar shown when external provider is active */
+.provider-badge {
+  padding: 3px 12px; background: var(--accent); color: #fff;
+  border-radius: 20px; font-size: 11px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; align-self: center;
+  margin-left: 8px; transition: opacity .2s;
+}
+.provider-badge:hover { opacity: .85; }
 
 .form-group { display: flex; flex-direction: column; gap: 5px; }
 .form-row    { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

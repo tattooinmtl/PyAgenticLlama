@@ -1,7 +1,7 @@
 import asyncio, json, os, uuid, subprocess, sys
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
@@ -25,9 +25,94 @@ SKILLS_DIR.mkdir(exist_ok=True)
 
 # ── App ───────────────────────────────────────────────────────────
 
+def _autodiscover_py_skills():
+    """Scan SKILLS_DIR for .py files that define execute() and register missing ones."""
+    import ast, re
+
+    # Collect already-known ids, names, and py_file references
+    existing_ids      = set()
+    existing_names    = set()
+    existing_py_files = set()
+    for f in SKILLS_DIR.glob('*.json'):
+        try:
+            s = json.loads(f.read_text())
+            existing_ids.add(s.get('id', '').lower())
+            existing_names.add(s.get('name', '').lower().replace(' ', '_'))
+            if s.get('py_file'):
+                existing_py_files.add(s['py_file'].lower())
+        except Exception:
+            pass
+
+    registered = 0
+    for py_path in sorted(SKILLS_DIR.glob('*.py')):
+        stem = py_path.stem
+
+        # Skip if already registered (by id, name, py_file ref, or existing json)
+        if (stem.lower() in existing_ids
+                or stem.lower() in existing_names
+                or py_path.name.lower() in existing_py_files
+                or (SKILLS_DIR / f'{stem}.json').exists()):
+            continue
+
+        try:
+            code = py_path.read_text(encoding='utf-8', errors='ignore')
+        except Exception:
+            continue
+
+        if 'def execute(' not in code:
+            continue   # not a skill file
+
+        # Module docstring → description
+        description = f'Auto-discovered skill from {py_path.name}'
+        try:
+            doc = ast.get_docstring(ast.parse(code))
+            if doc:
+                description = doc.splitlines()[0].strip()
+        except Exception:
+            pass
+
+        # Infer parameters from kwargs.get() calls
+        type_map = {'int': 'integer', 'float': 'number', 'bool': 'boolean'}
+        properties: dict = {}
+        for m in re.finditer(
+            r'(\w+)\s*=\s*(int|float|bool|str)?\s*\(?kwargs\.get\(["\'](\w+)["\']',
+            code
+        ):
+            cast, param = m.group(2), m.group(3)
+            properties[param] = {'type': type_map.get(cast, 'string'), 'description': param}
+        if not properties:   # fallback: undecorated kwargs.get
+            for m in re.finditer(r'kwargs\.get\(["\'](\w+)["\']', code):
+                properties[m.group(1)] = {'type': 'string', 'description': m.group(1)}
+
+        skill = {
+            'id': stem,
+            'name': stem.replace('_', ' ').title(),
+            'description': description,
+            'parameters': {
+                'type': 'object',
+                'properties': properties,
+                'required': list(properties)[:1],
+            },
+            'action_type': 'python',
+            'code': '',           # runtime loads from py_file
+            'py_file': py_path.name,
+            'webhook_url': '',
+            'enabled': True,
+        }
+
+        (SKILLS_DIR / f'{stem}.json').write_text(json.dumps(skill, indent=2))
+        existing_ids.add(stem.lower())
+        registered += 1
+        print(f'[Skills] Auto-registered: {skill["name"]} ({py_path.name})')
+
+    if registered:
+        print(f'[Skills] {registered} new skill(s) discovered and registered.')
+
+
 @asynccontextmanager
 async def lifespan(app):
-    set_env_from_vault()   # Load vault env vars on startup
+    set_env_from_vault()       # load vault env vars
+    _autodiscover_py_skills()  # register any new .py skills
     yield
     await stop_all()
     await mcp.disconnect_all()
@@ -38,6 +123,10 @@ app.mount('/static', StaticFiles(directory=Path(__file__).parent / 'static'), na
 @app.get('/')
 def root():
     return FileResponse(Path(__file__).parent / 'static' / 'index.html')
+
+@app.get('/logo.png')
+def serve_logo():
+    return FileResponse(Path(__file__).parent / 'logo.png', media_type='image/png')
 
 # ── Hardware ──────────────────────────────────────────────────────
 
@@ -207,6 +296,110 @@ def server_log(name: str = 'main', lines: int = 80):
     all_lines = log_path.read_text(errors='replace').splitlines()
     return {'lines': all_lines[-lines:]}
 
+# ── Provider ──────────────────────────────────────────────────────
+
+class ProviderConfig(BaseModel):
+    type: str = 'local'          # 'local' | 'external'
+    name: str = ''
+    base_url: str = ''
+    api_key: str = ''
+    model: str = ''
+
+def _get_provider() -> dict:
+    raw = get_secret('_provider_config', '')
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return {'type': 'local'}
+
+def _provider_url_headers(provider: dict, srv) -> tuple[str, dict]:
+    """Return (url, auth-headers) for /v1/chat/completions."""
+    if provider.get('type') == 'external':
+        base = provider['base_url'].rstrip('/')
+        return f'{base}/chat/completions', {'Authorization': f"Bearer {provider['api_key']}"}
+    return f'{srv.base_url()}/v1/chat/completions', {}
+
+def _infer_provider_name(base_url: str) -> str:
+    u = base_url.lower()
+    for kw, label in [('nvidia','NVIDIA NIM'), ('openai','OpenAI'),
+                       ('anthropic','Anthropic'), ('groq','Groq'),
+                       ('together','Together AI'), ('mistral','Mistral AI'),
+                       ('cohere','Cohere'), ('deepseek','DeepSeek'),
+                       ('gemini','Google AI'), ('google','Google AI')]:
+        if kw in u:
+            return label
+    return 'Custom Provider'
+
+@app.get('/api/provider')
+def get_provider():
+    return _get_provider()
+
+@app.post('/api/provider')
+def set_provider(cfg: ProviderConfig):
+    data = cfg.model_dump()
+    set_secret('_provider_config', json.dumps(data))
+    return data
+
+@app.delete('/api/provider')
+def reset_provider():
+    set_secret('_provider_config', json.dumps({'type': 'local'}))
+    return {'type': 'local'}
+
+@app.post('/api/provider/parse-file')
+async def parse_provider_file(file: UploadFile = File(...)):
+    """Extract base_url, api_key and model from an OpenAI-compatible .py config file."""
+    import ast, re
+    content = (await file.read()).decode('utf-8', errors='ignore')
+
+    base_url = api_key = model = ''
+
+    # AST pass — handles OpenAI(base_url=...) and .create(model=...)
+    try:
+        tree = ast.parse(content)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            fn_name = (fn.id if isinstance(fn, ast.Name)
+                       else fn.attr if isinstance(fn, ast.Attribute) else '')
+            if fn_name in ('OpenAI', 'AsyncOpenAI', 'AzureOpenAI'):
+                for kw in node.keywords:
+                    if kw.arg == 'base_url' and isinstance(kw.value, ast.Constant):
+                        base_url = kw.value.value
+                    elif kw.arg == 'api_key' and isinstance(kw.value, ast.Constant):
+                        api_key = kw.value.value
+            if isinstance(fn, ast.Attribute) and fn.attr == 'create':
+                for kw in node.keywords:
+                    if kw.arg == 'model' and isinstance(kw.value, ast.Constant) and not model:
+                        model = kw.value.value
+    except Exception:
+        pass
+
+    # Regex fallback
+    if not base_url:
+        m = re.search(r'base_url\s*=\s*["\']([^"\']+)["\']', content)
+        if m: base_url = m.group(1)
+    if not api_key:
+        m = re.search(r'api_key\s*=\s*["\']([^"\']+)["\']', content)
+        if m: api_key = m.group(1)
+    if not model:
+        m = re.search(r'model\s*=\s*["\']([^"\']+)["\']', content)
+        if m: model = m.group(1)
+
+    if not base_url and not api_key:
+        raise HTTPException(400, 'Could not find provider configuration in this file. '
+                                 'Expected an OpenAI-compatible client with base_url and api_key.')
+
+    return {
+        'type': 'external',
+        'name': _infer_provider_name(base_url),
+        'base_url': base_url,
+        'api_key': api_key,
+        'model': model,
+    }
+
 # ── Chat ──────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
@@ -248,14 +441,14 @@ def _skills_as_tools() -> list:
 
 @app.post('/api/chat')
 async def chat(req: ChatRequest):
+    provider = _get_provider()
     srv = get_server(req.server_name)
-    if not srv.running:
+    if provider.get('type') != 'external' and not srv.running:
         raise HTTPException(503, 'No model loaded. Load a model first.')
 
     ctx = get_context(req.conv_id)
     system, temp, top_p = _resolve_persona(req.personality_id, req.system)
 
-    # Optionally inject relevant memories into system prompt
     if req.inject_memory and req.message:
         mems = recall(req.message, limit=5)
         if mems:
@@ -267,7 +460,7 @@ async def chat(req: ChatRequest):
     tools = _skills_as_tools()
 
     payload: dict = {
-        'model': 'local',
+        'model': provider.get('model', 'local') if provider.get('type') == 'external' else 'local',
         'messages': messages,
         'stream': req.stream,
         'temperature': temp,
@@ -278,25 +471,28 @@ async def chat(req: ChatRequest):
 
     if req.stream:
         return StreamingResponse(
-            _stream_response(srv, payload, ctx, req.conv_id, req.message),
+            _stream_response(srv, payload, ctx, req.conv_id, req.message, provider),
             media_type='text/event-stream',
             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
         )
-    return await _blocking_response(srv, payload, ctx, req.conv_id, req.message)
+    return await _blocking_response(srv, payload, ctx, req.conv_id, req.message, provider)
 
-async def _stream_response(srv, payload, ctx, conv_id, user_msg):
+async def _stream_response(srv, payload, ctx, conv_id, user_msg, provider=None):
+    provider = provider or {'type': 'local'}
+    url, headers = _provider_url_headers(provider, srv)
+    model_label = (provider.get('name') or provider.get('model', '')) \
+        if provider.get('type') == 'external' else (srv.model_path or '')
     full = ''
     try:
         async with httpx.AsyncClient(timeout=600) as client:
-            async with client.stream('POST', f'{srv.base_url()}/v1/chat/completions',
-                                     json=payload) as resp:
+            async with client.stream('POST', url, json=payload, headers=headers) as resp:
                 async for raw in resp.aiter_lines():
                     if not raw.startswith('data: '):
                         continue
                     data = raw[6:].strip()
                     if data == '[DONE]':
                         ctx.add('assistant', full)
-                        save_conversation(conv_id, user_msg[:60], srv.model_path or '')
+                        save_conversation(conv_id, user_msg[:60], model_label)
                         add_message(conv_id, 'user', user_msg)
                         add_message(conv_id, 'assistant', full)
                         if ctx.needs_compaction():
@@ -317,9 +513,11 @@ async def _stream_response(srv, payload, ctx, conv_id, user_msg):
     except Exception as e:
         yield f'data: {json.dumps({"error": str(e)})}\n\n'
 
-async def _blocking_response(srv, payload, ctx, conv_id, user_msg):
+async def _blocking_response(srv, payload, ctx, conv_id, user_msg, provider=None):
+    provider = provider or {'type': 'local'}
+    url, headers = _provider_url_headers(provider, srv)
     async with httpx.AsyncClient(timeout=600) as client:
-        resp = await client.post(f'{srv.base_url()}/v1/chat/completions', json=payload)
+        resp = await client.post(url, json=payload, headers=headers)
         data = resp.json()
     content = data['choices'][0]['message']['content']
     ctx.add('assistant', content)
@@ -330,6 +528,9 @@ async def _blocking_response(srv, payload, ctx, conv_id, user_msg):
     return {'content': content}
 
 async def _compact(srv, ctx):
+    provider = _get_provider()
+    url, headers = _provider_url_headers(provider, srv)
+    model_id = provider.get('model', 'local') if provider.get('type') == 'external' else 'local'
     n = max(2, len(ctx.messages) // 2)
     to_sum = ctx.messages[:n]
     prompt = [
@@ -338,10 +539,8 @@ async def _compact(srv, ctx):
     ]
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f'{srv.base_url()}/v1/chat/completions',
-                json={'model': 'local', 'messages': prompt, 'stream': False}
-            )
+            resp = await client.post(url, headers=headers,
+                                     json={'model': model_id, 'messages': prompt, 'stream': False})
             summary = resp.json()['choices'][0]['message']['content']
             ctx.apply_summary(summary, n)
     except Exception:
@@ -377,21 +576,24 @@ class SkillIn(BaseModel):
 @app.get('/api/skills/source')
 def skill_source(id: str = Query(...)):
     """Return the source code for a skill — also checks for a matching .py file."""
-    # Check JSON skill first
     json_path = SKILLS_DIR / f'{id}.json'
     if json_path.exists():
         s = json.loads(json_path.read_text())
+        # Prefer explicit py_file reference
+        if s.get('py_file'):
+            py_path = SKILLS_DIR / s['py_file']
+            if py_path.exists():
+                return {'code': py_path.read_text(encoding='utf-8'), 'source': 'file'}
         if s.get('code'):
             return {'code': s['code'], 'source': 'json'}
-        # Try a matching .py by name
-        py_name = s.get('name', '').replace(' ', '_') + '.py'
-        py_path = SKILLS_DIR / py_name
+        # Fallback: .py with same stem
+        py_path = SKILLS_DIR / f'{id}.py'
         if py_path.exists():
-            return {'code': py_path.read_text(), 'source': 'file'}
-    # Fallback: look for .py with matching name/id
+            return {'code': py_path.read_text(encoding='utf-8'), 'source': 'file'}
+    # Last resort: search by stem
     for py_path in SKILLS_DIR.glob('*.py'):
         if py_path.stem.lower() == id.lower():
-            return {'code': py_path.read_text(), 'source': 'file'}
+            return {'code': py_path.read_text(encoding='utf-8'), 'source': 'file'}
     raise HTTPException(404, 'Skill source not found')
 
 @app.get('/api/skills/find')
@@ -453,6 +655,15 @@ async def run_skill_ep(skill_id: str, kwargs: dict = {}):
 
 async def _execute_skill(skill: dict, kwargs: dict) -> str:
     if skill['action_type'] == 'python':
+        code = (skill.get('code') or '').strip()
+        # If no embedded code, load from referenced .py file (auto-discovered skills)
+        if not code:
+            py_name = skill.get('py_file') or f"{skill['id']}.py"
+            py_path = SKILLS_DIR / py_name
+            if py_path.exists():
+                code = py_path.read_text(encoding='utf-8')
+        if not code:
+            raise ValueError(f'No code found for skill {skill["id"]!r}')
         ns = {
             '__builtins__': __builtins__,
             'httpx': __import__('httpx'),
@@ -462,7 +673,7 @@ async def _execute_skill(skill: dict, kwargs: dict) -> str:
             'Path': Path,
             'vault_get': get_secret,
         }
-        exec(compile(skill['code'], '<skill>', 'exec'), ns)
+        exec(compile(code, '<skill>', 'exec'), ns)
         fn = ns.get('execute')
         if not fn:
             raise ValueError('Skill must define an execute(**kwargs) function')

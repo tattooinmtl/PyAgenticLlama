@@ -652,56 +652,66 @@ function _storeCode(lang, code) {
 function renderMarkdown(text) {
   if (!text) return '';
 
-  // ── Fenced code blocks — rendered as rich interactive blocks ────
-  let html = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, rawLang, rawCode) => {
+  // ── Step 1: Extract fenced code blocks → null-byte placeholders ──
+  // Handles 3+ backticks; optional trailing text on opening line.
+  // Code is escaped here; the rest of the text is escaped in step 2.
+  const _blocks = [];
+  let html = text.replace(/`{3,}(\w*)[^\n]*\n([\s\S]*?)\n?`{3,}/g, (_, rawLang, rawCode) => {
     const lang = (rawLang || 'text').toLowerCase();
     const code = rawCode.trimEnd();
     const id   = _storeCode(lang, code);
     const esc  = escHtml(code);
-    const isRunnable  = ['python', 'py'].includes(lang);
+    const isRunnable    = ['python', 'py'].includes(lang);
     const isPreviewable = ['html', 'javascript', 'js', 'css', 'jsx', 'tsx', 'svg'].includes(lang);
-
-    return `<div class="code-block" data-cbid="${id}">
+    _blocks.push(`<div class="code-block" data-cbid="${id}">
       <div class="code-header">
         <span class="code-lang">${escHtml(lang)}</span>
         <div class="code-actions">
           <button class="code-btn" onclick="copyCodeBlock('${id}', this)">📋 Copy</button>
-          ${isRunnable   ? `<button class="code-btn code-btn-run"     onclick="runCodeBlock('${id}')">▶ Run</button>` : ''}
+          ${isRunnable    ? `<button class="code-btn code-btn-run"     onclick="runCodeBlock('${id}')">▶ Run</button>` : ''}
           ${isPreviewable ? `<button class="code-btn code-btn-preview" onclick="previewCodeBlock('${id}')">👁 Preview</button>` : ''}
           <button class="code-btn code-btn-vscode" onclick="sendToVSCode('${id}')" title="Send to VS Code as new tab">⌗ VS Code</button>
         </div>
       </div>
       <pre><code>${esc}</code></pre>
-    </div>`;
+    </div>`);
+    return `\x00BLOCK${_blocks.length - 1}\x00`;
   });
 
-  // Inline code
-  html = html.replace(/`([^`\n]+)`/g, (_, c) => `<code>${escHtml(c)}</code>`);
-  // Bold / italic
+  // ── Step 2: Escape ALL remaining text ─────────────────────────────
+  // Prevents model-output HTML from being injected into the page.
+  // Placeholders use \x00 which is unaffected by escHtml.
+  html = escHtml(html);
+
+  // ── Step 3: Apply inline markdown (on already-escaped text) ───────
+  // Captured groups are already escaped — do NOT call escHtml() again.
+  html = html.replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`);
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-  // Headers
   html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  // Tables (basic)
+  html = html.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
   html = html.replace(/^\|(.+)\|$/gm, (line) => {
     if (/^[\|\s\-:]+$/.test(line)) return '';
-    const cells = line.split('|').slice(1,-1).map(c=>`<td>${c.trim()}</td>`).join('');
+    const cells = line.split('|').slice(1, -1).map(c => `<td>${c.trim()}</td>`).join('');
     return `<tr>${cells}</tr>`;
   });
   html = html.replace(/(<tr>[\s\S]*?<\/tr>)/g, '<table>$1</table>');
-  // Lists
   html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
   html = html.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
-  // Paragraphs — skip lines that are already block elements
+
+  // Paragraphs — skip block elements and placeholders
   const parts = html.split(/\n{2,}/);
   html = parts.map(p => {
     const t = p.trim();
     if (!t) return '';
     if (/^<(div|pre|ul|ol|table|h[1-6]|blockquote)/.test(t)) return t;
+    if (t.includes('\x00BLOCK')) return t;
     return `<p>${t.replace(/\n/g, '<br>')}</p>`;
   }).join('\n');
+
+  // ── Step 4: Restore code block HTML ───────────────────────────────
+  html = html.replace(/\x00BLOCK(\d+)\x00/g, (_, i) => _blocks[+i]);
 
   return html;
 }
@@ -1534,6 +1544,141 @@ CODING RULES:
 5. Imports, dependencies, requirements.txt/package.json must be included when needed
 6. After sending all code blocks, give a brief "How to run" section`;
 
+// ── Provider ──────────────────────────────────────────────────────
+
+let _parsedProviderCfg = null;
+
+async function openProviderModal() {
+  _parsedProviderCfg = null;
+  document.getElementById('prov-preview').style.display = 'none';
+  document.getElementById('prov-confirm-btn').style.display = 'none';
+  document.getElementById('prov-dropzone-icon').textContent = '📄';
+
+  // Fetch current config and server status in parallel
+  const [cfg, srv] = await Promise.all([
+    fetch('/api/provider').then(r => r.json()).catch(() => ({ type: 'local' })),
+    fetch('/api/server/status').then(r => r.json()).catch(() => ({})),
+  ]);
+
+  // Update local-tab status pill
+  const localEl = document.getElementById('local-provider-status');
+  if (srv.running) {
+    localEl.innerHTML = `<span style="color:var(--green)">●</span> llama.cpp running — <strong>${escHtml(srv.model || 'model loaded')}</strong>`;
+  } else {
+    localEl.innerHTML = `<span style="color:var(--text3)">○</span> No local model loaded`;
+  }
+
+  // Pre-fill manual fields if currently on an external provider
+  if (cfg.type === 'external') {
+    document.getElementById('prov-name').value  = cfg.name      || '';
+    document.getElementById('prov-url').value   = cfg.base_url  || '';
+    document.getElementById('prov-key').value   = cfg.api_key   || '';
+    document.getElementById('prov-model').value = cfg.model     || '';
+    setProviderTab('manual');
+  } else {
+    setProviderTab('local');
+  }
+
+  openModal('provider-modal');
+}
+
+function setProviderTab(tab) {
+  ['local', 'manual', 'upload'].forEach(t => {
+    document.getElementById(`ptab-${t}`).classList.toggle('active', t === tab);
+    document.getElementById(`ppanel-${t}`).style.display = t === tab ? '' : 'none';
+  });
+}
+
+async function resetToLocalProvider() {
+  await fetch('/api/provider', { method: 'DELETE' });
+  _updateProviderBadge({ type: 'local' });
+  closeModal('provider-modal');
+  toast('Switched back to local llama.cpp', 'success');
+}
+
+async function saveManualProvider() {
+  const name  = document.getElementById('prov-name').value.trim();
+  const url   = document.getElementById('prov-url').value.trim();
+  const key   = document.getElementById('prov-key').value.trim();
+  const model = document.getElementById('prov-model').value.trim();
+  if (!url || !key) { toast('Base URL and API Key are required', 'error'); return; }
+  const cfg = { type: 'external', name: name || 'Custom Provider', base_url: url, api_key: key, model };
+  await fetch('/api/provider', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  });
+  _updateProviderBadge(cfg);
+  closeModal('provider-modal');
+  toast(`Provider set to ${cfg.name}`, 'success');
+}
+
+function handleProviderFileDrop(e) {
+  e.preventDefault();
+  document.getElementById('prov-dropzone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) _parseProviderFile(file);
+}
+
+function handleProviderFileInput(input) {
+  const file = input.files[0];
+  if (file) _parseProviderFile(file);
+}
+
+async function _parseProviderFile(file) {
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const resp = await fetch('/api/provider/parse-file', { method: 'POST', body: fd });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || 'Could not parse file');
+    }
+    const cfg = await resp.json();
+    _parsedProviderCfg = cfg;
+
+    document.getElementById('prev-name').textContent  = cfg.name  || '—';
+    document.getElementById('prev-url').textContent   = cfg.base_url || '—';
+    document.getElementById('prev-key').textContent   = cfg.api_key
+      ? cfg.api_key.slice(0, 8) + '••••••••' : '(not found)';
+    document.getElementById('prev-model').textContent = cfg.model || '(not specified)';
+    document.getElementById('prov-preview').style.display      = '';
+    document.getElementById('prov-confirm-btn').style.display  = '';
+    document.getElementById('prov-dropzone-icon').textContent  = '✅';
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function confirmProviderFile() {
+  if (!_parsedProviderCfg) return;
+  await fetch('/api/provider', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(_parsedProviderCfg),
+  });
+  _updateProviderBadge(_parsedProviderCfg);
+  closeModal('provider-modal');
+  toast(`Provider set to ${_parsedProviderCfg.name}`, 'success');
+  _parsedProviderCfg = null;
+}
+
+function _updateProviderBadge(cfg) {
+  const badge = document.getElementById('provider-badge');
+  if (!badge) return;
+  if (cfg && cfg.type === 'external') {
+    badge.textContent = `🔌 ${cfg.name || 'External API'}`;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+async function _loadProviderBadge() {
+  const cfg = await fetch('/api/provider').then(r => r.json()).catch(() => ({ type: 'local' }));
+  _updateProviderBadge(cfg);
+}
+
 async function openCodingModal() {
   // Check VS Code status when opening
   const vsStatus = document.getElementById('cs-vscode-status');
@@ -1596,17 +1741,14 @@ async function startCodingSession() {
 }
 
 function browseCodingFolder() {
-  // Reuse the file browser modal in folder-select mode
-  openFileBrowser();
-  // When a folder is selected in the browser, copy path to cs-folder
   window._codingFolderPick = true;
+  openFileBrowser();
 }
 
 // Override selectBrowserModel when in coding folder-pick mode
 const _origSelectBrowserModel = window.selectBrowserModel;
 function selectBrowserModel() {
   if (window._codingFolderPick) {
-    // Use the current browser path as the folder
     document.getElementById('cs-folder').value = state.browserPath;
     document.getElementById('cs-vscode-open').style.display = '';
     window._codingFolderPick = false;
@@ -1616,11 +1758,24 @@ function selectBrowserModel() {
   }
 }
 
+// Clear the folder-pick flag if the browser modal is closed without selecting
+// (e.g. user clicks the backdrop or the X button)
+function _onBrowserModalClose() {
+  window._codingFolderPick = false;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const bm = document.getElementById('browser-modal');
+  if (bm) bm.addEventListener('click', e => {
+    if (e.target === bm) _onBrowserModalClose();
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // ── Slash Commands ────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════
 
 const SLASH_COMMANDS = [
+  { cmd: '/provider',       desc: 'Switch AI provider (local, API key, or upload config file)', usage: '/provider' },
   { cmd: '/coding',         desc: 'Start a coding session with project context', usage: '/coding' },
   { cmd: '/validate_skill', desc: 'Validate a skill with AI',                   usage: '/validate_skill <name>' },
   { cmd: '/fix_skill',      desc: 'Ask AI to rewrite a broken skill',            usage: '/fix_skill <name>' },
@@ -1695,6 +1850,7 @@ async function handleSlashCommand(raw) {
   const args   = parts.slice(1).join(' ').trim();
 
   switch (cmd) {
+    case '/provider':       return openProviderModal();
     case '/coding':         return openCodingModal();
     case '/validate_skill': return runValidateSkill(args, false);
     case '/fix_skill':      return runValidateSkill(args, true);
@@ -2447,19 +2603,59 @@ async function terminalRun() {
 }
 
 // ── Boot ──────────────────────────────────────────────────────────
+
+function _splashLog(msg, status = 'ok') {
+  const lines = document.getElementById('splash-lines');
+  if (!lines) return;
+  const tag = status === 'ok'   ? '<span class="s-ok">[  OK  ]</span>'
+             : status === 'warn' ? '<span class="s-warn">[ WARN ]</span>'
+             :                    '<span class="s-info">[ INFO ]</span>';
+  const el = document.createElement('div');
+  el.className = 'splash-line';
+  el.innerHTML = `${tag} ${msg}`;
+  lines.appendChild(el);
+  // Keep scroll at bottom so latest line is always visible
+  const term = document.getElementById('splash-terminal');
+  if (term) term.scrollTop = term.scrollHeight;
+}
+
+function _splashWrap(promise, doneMsg, warnMsg) {
+  return promise
+    .then(r  => { _splashLog(doneMsg, 'ok');   return r; })
+    .catch(e => { _splashLog(warnMsg || doneMsg + ' — skipped', 'warn'); });
+}
+
 async function init() {
+  _splashLog('PyAgenticLlama initializing…', 'info');
+  _splashLog('uvicorn ASGI server running on port 7860', 'ok');
+  _splashLog('FastAPI lifespan: vault env loaded', 'ok');
+  _splashLog('Skill auto-discovery complete', 'ok');
+
   initMenuBar();
   initTabs();
   initInput();
   initModelSelect();
+  _splashLog('UI shell mounted', 'ok');
+
   await Promise.all([
-    loadHardware(),
-    loadModels(),
-    loadPersonalities(),
-    loadSkills(),
-    checkServerStatus(),
+    _splashWrap(loadHardware(),       'Hardware info loaded'),
+    _splashWrap(loadModels(),         'Model directory scanned'),
+    _splashWrap(loadPersonalities(),  'Personalities registered'),
+    _splashWrap(loadSkills(),         'Skills indexed'),
+    _splashWrap(checkServerStatus(),  'Inference server checked'),
+    _splashWrap(_loadProviderBadge(), 'Provider config loaded'),
   ]);
+
   startPolling();
+  _splashLog('All systems nominal — welcome!', 'ok');
+
+  // Short pause so the user can read the last line, then fade out
+  await new Promise(r => setTimeout(r, 750));
+  const splash = document.getElementById('splash-screen');
+  if (splash) {
+    splash.classList.add('fade-out');
+    splash.addEventListener('transitionend', () => splash.remove(), { once: true });
+  }
 }
 
 init();

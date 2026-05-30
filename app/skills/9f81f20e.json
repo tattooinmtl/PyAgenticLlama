@@ -1,0 +1,29 @@
+{
+  "id": "9f81f20e",
+  "name": "web_search",
+  "description": "Search the web and return relevant content from top results. Use for current events, research, documentation lookups.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search query"
+      },
+      "max_results": {
+        "type": "integer",
+        "description": "Number of results (default 5)"
+      },
+      "scrape": {
+        "type": "boolean",
+        "description": "Fetch full page content for top 3 results (default true)"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "action_type": "python",
+  "code": "import importlib.util, sys\nspec = importlib.util.spec_from_file_location(\"web_search\", r\"C:\\Users\\ThePa\\AIWorkspace\\LocalAI\\app\\skills\\web_search.py\")\nmod = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(mod)\n\ndef execute(**kwargs):\n    return mod.execute(**kwargs)\n",
+  "webhook_url": "",
+  "enabled": true
+}

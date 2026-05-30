@@ -1,0 +1,34 @@
+{
+  "id": "javascript_snippets_skill",
+  "name": "Javascript Snippets Skill",
+  "description": "JavaScript Advanced Snippets Skill for llama.cpp",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "category": {
+        "type": "string",
+        "description": "category"
+      },
+      "type": {
+        "type": "string",
+        "description": "type"
+      },
+      "search": {
+        "type": "string",
+        "description": "search"
+      },
+      "list": {
+        "type": "boolean",
+        "description": "list"
+      }
+    },
+    "required": [
+      "category"
+    ]
+  },
+  "action_type": "python",
+  "code": "",
+  "py_file": "javascript_snippets_skill.py",
+  "webhook_url": "",
+  "enabled": true
+}

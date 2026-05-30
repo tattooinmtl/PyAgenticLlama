@@ -1,0 +1,38 @@
+{
+  "id": "python_snippets_skill",
+  "name": "Python Snippets Skill",
+  "description": "Python Snippets Skill for llama.cpp",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "category": {
+        "type": "string",
+        "description": "category"
+      },
+      "type": {
+        "type": "string",
+        "description": "type"
+      },
+      "search": {
+        "type": "string",
+        "description": "search"
+      },
+      "format": {
+        "type": "string",
+        "description": "format"
+      },
+      "list": {
+        "type": "boolean",
+        "description": "list"
+      }
+    },
+    "required": [
+      "category"
+    ]
+  },
+  "action_type": "python",
+  "code": "",
+  "py_file": "python_snippets_skill.py",
+  "webhook_url": "",
+  "enabled": true
+}

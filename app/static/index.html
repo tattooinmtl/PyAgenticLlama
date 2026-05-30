@@ -7,6 +7,16 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+
+<!-- ── Splash Screen ──────────────────────────────────────────── -->
+<div id="splash-screen">
+  <img src="/logo.png" id="splash-logo" alt="PyAgenticLlama" onerror="this.style.display='none'">
+  <div id="splash-terminal">
+    <div id="splash-lines"></div>
+    <div id="splash-cursor-line"><span id="splash-cursor">█</span></div>
+  </div>
+</div>
+
 <div class="app">
 
   <!-- ── Menu Bar ─────────────────────────────────────────────── -->
@@ -94,6 +104,9 @@
         <a data-action="about">About LocalAI</a>
       </div>
     </div>
+
+    <!-- Provider badge — visible only when an external API is active -->
+    <div id="provider-badge" class="provider-badge" onclick="openProviderModal()" title="Switch AI provider" style="display:none"></div>
 
     <div class="menu-spacer"></div>
     <!-- VS Code connection indicator -->
@@ -532,6 +545,95 @@
       <button class="btn btn-ghost" onclick="closeModal('log-modal')">Close</button>
       <button class="btn btn-ghost" onclick="loadServerLog()">Refresh</button>
     </div>
+  </div>
+</div>
+
+<!-- ── Provider Modal ─────────────────────────────────────────── -->
+<div class="modal-overlay" id="provider-modal">
+  <div class="modal-box" style="width:480px">
+    <div class="modal-title">🔌 AI Provider</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">
+      Choose how to power the AI: local llama.cpp model, external API, or upload a provider config file.
+    </div>
+
+    <!-- Tab bar -->
+    <div class="provider-tabs">
+      <button class="provider-tab active" id="ptab-local"  onclick="setProviderTab('local')">🖥 Local</button>
+      <button class="provider-tab"        id="ptab-manual" onclick="setProviderTab('manual')">⌨ Manual API</button>
+      <button class="provider-tab"        id="ptab-upload" onclick="setProviderTab('upload')">📄 Upload File</button>
+    </div>
+
+    <!-- ── Tab: Local ─────────────────────────────────────── -->
+    <div class="provider-panel" id="ppanel-local">
+      <div id="local-provider-status" style="padding:12px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);font-size:13px;min-height:38px"></div>
+      <div style="font-size:12px;color:var(--text2);margin-top:8px">
+        Load a <code>.gguf</code> model from the Files panel and run it locally with llama.cpp — no API key needed, fully private.
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('provider-modal')">Close</button>
+        <button class="btn btn-primary" onclick="resetToLocalProvider()">✓ Use Local</button>
+      </div>
+    </div>
+
+    <!-- ── Tab: Manual API ────────────────────────────────── -->
+    <div class="provider-panel" id="ppanel-manual" style="display:none">
+      <div class="form-group">
+        <label>Provider Name <span style="color:var(--text3)">(label only)</span></label>
+        <input type="text" id="prov-name" placeholder="NVIDIA NIM, OpenAI, Groq…">
+      </div>
+      <div class="form-group">
+        <label>Base URL</label>
+        <input type="text" id="prov-url" placeholder="https://integrate.api.nvidia.com/v1">
+      </div>
+      <div class="form-group">
+        <label>API Key</label>
+        <input type="password" id="prov-key" placeholder="nvapi-…  sk-…">
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <input type="text" id="prov-model" placeholder="z-ai/glm-5.1  gpt-4o  llama-3.3-70b…">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('provider-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveManualProvider()">💾 Save &amp; Use</button>
+      </div>
+    </div>
+
+    <!-- ── Tab: Upload File ───────────────────────────────── -->
+    <div class="provider-panel" id="ppanel-upload" style="display:none">
+      <div class="file-dropzone" id="prov-dropzone"
+           ondragover="event.preventDefault();this.classList.add('drag-over')"
+           ondragleave="this.classList.remove('drag-over')"
+           ondrop="handleProviderFileDrop(event)">
+        <div id="prov-dropzone-icon" style="font-size:30px;margin-bottom:6px">📄</div>
+        <div style="font-weight:600;margin-bottom:4px">Drop your provider .py file here</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
+          e.g. <code>nvidia_env.py</code> — base_url, api_key and model are extracted automatically
+        </div>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer">
+          Browse…
+          <input type="file" id="prov-file-input" accept=".py,.txt,.env" style="display:none"
+                 onchange="handleProviderFileInput(this)">
+        </label>
+      </div>
+
+      <!-- Parsed preview -->
+      <div id="prov-preview" style="display:none;margin-top:10px">
+        <div style="font-size:11px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Extracted from file</div>
+        <table style="width:100%;font-size:12px;border-collapse:collapse;background:var(--surface2);border-radius:8px;overflow:hidden">
+          <tr><td style="padding:6px 10px;color:var(--text2);white-space:nowrap;width:90px">Provider</td><td id="prev-name"  style="padding:6px 10px;font-weight:600"></td></tr>
+          <tr><td style="padding:6px 10px;color:var(--text2)">Base URL</td>  <td id="prev-url"   style="padding:6px 10px;font-family:var(--mono);font-size:11px;word-break:break-all"></td></tr>
+          <tr><td style="padding:6px 10px;color:var(--text2)">API Key</td>   <td id="prev-key"   style="padding:6px 10px;font-family:var(--mono);font-size:11px;color:var(--text3)"></td></tr>
+          <tr><td style="padding:6px 10px;color:var(--text2)">Model</td>     <td id="prev-model" style="padding:6px 10px;font-family:var(--mono);font-size:11px"></td></tr>
+        </table>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('provider-modal')">Cancel</button>
+        <button class="btn btn-primary" id="prov-confirm-btn" style="display:none" onclick="confirmProviderFile()">✓ Use This Provider</button>
+      </div>
+    </div>
+
   </div>
 </div>
 
