@@ -1,0 +1,49 @@
+{
+  "name": "pyagentic-llama",
+  "displayName": "PyAgenticLlama",
+  "description": "Connect PyAgenticLlama local AI to VS Code — send code blocks directly into the editor",
+  "version": "1.0.0",
+  "publisher": "tattooinmtl",
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Other"],
+  "icon": "icon.png",
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "pyagenticllama.showStatus",
+        "title": "PyAgenticLlama: Show Status"
+      },
+      {
+        "command": "pyagenticllama.openApp",
+        "title": "PyAgenticLlama: Open App in Browser"
+      },
+      {
+        "command": "pyagenticllama.openProjectFolder",
+        "title": "PyAgenticLlama: Open Project Folder in Workspace"
+      }
+    ],
+    "configuration": {
+      "title": "PyAgenticLlama",
+      "properties": {
+        "pyagenticllama.port": {
+          "type": "number",
+          "default": 3333,
+          "description": "Local port the extension listens on for code from PyAgenticLlama"
+        },
+        "pyagenticllama.appUrl": {
+          "type": "string",
+          "default": "http://localhost:7860",
+          "description": "URL of your running PyAgenticLlama app"
+        },
+        "pyagenticllama.autoFocus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Bring VS Code to front when code is received"
+        }
+      }
+    }
+  },
+  "keywords": ["ai", "llama", "local-ai", "code-generation"]
+}

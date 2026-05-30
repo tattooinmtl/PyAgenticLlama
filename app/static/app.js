@@ -666,8 +666,9 @@ function renderMarkdown(text) {
         <span class="code-lang">${escHtml(lang)}</span>
         <div class="code-actions">
           <button class="code-btn" onclick="copyCodeBlock('${id}', this)">📋 Copy</button>
-          ${isRunnable  ? `<button class="code-btn code-btn-run"     onclick="runCodeBlock('${id}')">▶ Run</button>` : ''}
+          ${isRunnable   ? `<button class="code-btn code-btn-run"     onclick="runCodeBlock('${id}')">▶ Run</button>` : ''}
           ${isPreviewable ? `<button class="code-btn code-btn-preview" onclick="previewCodeBlock('${id}')">👁 Preview</button>` : ''}
+          <button class="code-btn code-btn-vscode" onclick="sendToVSCode('${id}')" title="Send to VS Code as new tab">⌗ VS Code</button>
         </div>
       </div>
       <pre><code>${esc}</code></pre>
@@ -1438,18 +1439,197 @@ function saveChat() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// ── VS Code Bridge ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+const vsCode = {
+  connected: false,
+  workspace: '',
+};
+
+async function checkVSCode() {
+  try {
+    const data = await API.get('/api/vscode/status');
+    vsCode.connected = data.connected;
+    vsCode.workspace = data.workspace || '';
+    updateVSCodeStatus(data);
+    return data.connected;
+  } catch (e) {
+    vsCode.connected = false;
+    updateVSCodeStatus({ connected: false });
+    return false;
+  }
+}
+
+function updateVSCodeStatus(data) {
+  const dot  = document.getElementById('vscode-dot');
+  const txt  = document.getElementById('vscode-status-text');
+  const ind  = document.getElementById('vscode-indicator');
+  if (!dot) return;
+  dot.className = 'dot' + (data.connected ? ' green' : '');
+  txt.textContent = data.connected ? 'VS Code ●' : 'VS Code';
+  ind.title = data.connected
+    ? `VS Code connected${data.workspace ? ' — ' + data.workspace : ''} (${data.received ?? 0} sent)`
+    : 'VS Code not connected — run install.bat in vscode-extension/';
+}
+
+async function sendToVSCode(cbId) {
+  const entry = _codeBlockStore[cbId];
+  if (!entry) return;
+
+  const ok = await checkVSCode();
+  if (!ok) {
+    toast('VS Code not connected. Run vscode-extension/install.bat then restart VS Code.', 'error', 6000);
+    return;
+  }
+
+  try {
+    await API.post('/api/vscode/send', {
+      code: entry.code,
+      language: entry.lang,
+      project_path: state.codingSession?.folder || '',
+      filename: '',
+    });
+    toast(`Sent to VS Code ✓ (${entry.lang || 'text'})`, 'success');
+  } catch (e) {
+    toast('VS Code send failed: ' + e.message, 'error', 5000);
+  }
+}
+
+async function openFolderInVSCode() {
+  const folder = document.getElementById('cs-folder').value.trim();
+  if (!folder) { toast('Enter a folder path first', 'error'); return; }
+  try {
+    await API.post('/api/vscode/open-folder', { folder });
+    toast('Sent folder to VS Code', 'success');
+  } catch (e) {
+    toast('Could not open in VS Code: ' + e.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ── Coding Session ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+
+// Extend state with coding session
+state.codingSession = null;  // null = no active session
+
+const CODING_SYSTEM_TEMPLATE = (s) => `You are an expert coding assistant working on a specific project.
+
+PROJECT CONTEXT:
+  Name: ${s.name}
+  Folder: ${s.folder || 'not specified'}
+  Type: ${s.type || 'not specified'}
+  Description: ${s.description || 'not specified'}
+
+CODING RULES:
+1. Every code block must start with a filename comment on the first line:
+   Python → # filename: main.py
+   JS/TS  → // filename: index.js
+   HTML   → <!-- filename: index.html -->
+   Other  → # filename: script.ext
+2. Each file gets its own separate code block — never combine multiple files in one block
+3. When creating a project, output the complete file tree first (use \`\`\`text), then each file
+4. Code must be complete and runnable — no "..." placeholders, no TODO stubs
+5. Imports, dependencies, requirements.txt/package.json must be included when needed
+6. After sending all code blocks, give a brief "How to run" section`;
+
+async function openCodingModal() {
+  // Check VS Code status when opening
+  const vsStatus = document.getElementById('cs-vscode-status');
+  const data = await checkVSCode().then(ok => ({connected: ok})).catch(() => ({connected: false}));
+  if (data.connected) {
+    vsStatus.innerHTML = '<span style="color:var(--green)">✅ VS Code connected — code will be sent automatically</span>';
+    if (vsCode.workspace) {
+      document.getElementById('cs-folder').value = vsCode.workspace;
+    }
+  } else {
+    vsStatus.innerHTML = '<span style="color:var(--yellow)">⚠️ VS Code not connected — run <code>vscode-extension/install.bat</code> and restart VS Code</span>';
+  }
+
+  // If session already active, pre-fill
+  if (state.codingSession) {
+    document.getElementById('cs-name').value   = state.codingSession.name;
+    document.getElementById('cs-folder').value = state.codingSession.folder;
+    document.getElementById('cs-type').value   = state.codingSession.type;
+    document.getElementById('cs-desc').value   = state.codingSession.description;
+  }
+
+  openModal('coding-modal');
+}
+
+async function startCodingSession() {
+  const name   = document.getElementById('cs-name').value.trim();
+  const folder = document.getElementById('cs-folder').value.trim();
+  const type   = document.getElementById('cs-type').value;
+  const desc   = document.getElementById('cs-desc').value.trim();
+
+  if (!name) { toast('Project name is required', 'error'); return; }
+
+  state.codingSession = { name, folder, type, description: desc };
+
+  // Update context bar badge
+  const badge = document.getElementById('coding-session-badge');
+  badge.className = 'coding-session-badge';
+  badge.innerHTML = `💻 ${escHtml(name)}`;
+  badge.style.display = '';
+
+  // If folder is given, try to open it in VS Code
+  if (folder && vsCode.connected) {
+    try { await API.post('/api/vscode/open-folder', { folder }); } catch (e) { /* silent */ }
+  }
+
+  closeModal('coding-modal');
+  newChat();
+
+  // Build the opening message
+  let intro = `I'm starting a coding session for **${name}**`;
+  if (type) intro += ` — a **${type}** project`;
+  if (folder) intro += `\nProject folder: \`${folder}\``;
+  if (desc) intro += `\n\nWhat to build: ${desc}`;
+  intro += `\n\nPlease start by asking any clarifying questions you need, then output the project structure and first files.`;
+
+  // Inject the coding system prompt for this session
+  removeEmptyState();
+  appendMessage('user', intro);
+  await streamChat(intro, CODING_SYSTEM_TEMPLATE(state.codingSession));
+}
+
+function browseCodingFolder() {
+  // Reuse the file browser modal in folder-select mode
+  openFileBrowser();
+  // When a folder is selected in the browser, copy path to cs-folder
+  window._codingFolderPick = true;
+}
+
+// Override selectBrowserModel when in coding folder-pick mode
+const _origSelectBrowserModel = window.selectBrowserModel;
+function selectBrowserModel() {
+  if (window._codingFolderPick) {
+    // Use the current browser path as the folder
+    document.getElementById('cs-folder').value = state.browserPath;
+    document.getElementById('cs-vscode-open').style.display = '';
+    window._codingFolderPick = false;
+    closeModal('browser-modal');
+  } else if (_origSelectBrowserModel) {
+    _origSelectBrowserModel();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ── Slash Commands ────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════
 
 const SLASH_COMMANDS = [
-  { cmd: '/validate_skill', desc: 'Validate a skill with AI',        usage: '/validate_skill <name>' },
-  { cmd: '/fix_skill',      desc: 'Ask AI to rewrite a broken skill', usage: '/fix_skill <name>' },
-  { cmd: '/list_skills',    desc: 'Show all registered skills',       usage: '/list_skills' },
-  { cmd: '/compact',        desc: 'Summarize + compact context',       usage: '/compact' },
-  { cmd: '/clear',          desc: 'Clear chat history',               usage: '/clear' },
-  { cmd: '/remember',       desc: 'Save a fact to memory',            usage: '/remember <text>' },
-  { cmd: '/recall',         desc: 'Search memory',                    usage: '/recall <query>' },
-  { cmd: '/help',           desc: 'Show all slash commands',          usage: '/help' },
+  { cmd: '/coding',         desc: 'Start a coding session with project context', usage: '/coding' },
+  { cmd: '/validate_skill', desc: 'Validate a skill with AI',                   usage: '/validate_skill <name>' },
+  { cmd: '/fix_skill',      desc: 'Ask AI to rewrite a broken skill',            usage: '/fix_skill <name>' },
+  { cmd: '/list_skills',    desc: 'Show all registered skills',                  usage: '/list_skills' },
+  { cmd: '/compact',        desc: 'Summarize + compact context',                 usage: '/compact' },
+  { cmd: '/clear',          desc: 'Clear chat history',                          usage: '/clear' },
+  { cmd: '/remember',       desc: 'Save a fact to memory',                       usage: '/remember <text>' },
+  { cmd: '/recall',         desc: 'Search memory',                               usage: '/recall <query>' },
+  { cmd: '/help',           desc: 'Show all slash commands',                     usage: '/help' },
 ];
 
 let _cmdSelectedIdx = -1;
@@ -1515,6 +1695,7 @@ async function handleSlashCommand(raw) {
   const args   = parts.slice(1).join(' ').trim();
 
   switch (cmd) {
+    case '/coding':         return openCodingModal();
     case '/validate_skill': return runValidateSkill(args, false);
     case '/fix_skill':      return runValidateSkill(args, true);
     case '/list_skills':    return listSkillsInChat();
@@ -1753,7 +1934,9 @@ function initModelSelect() {
 // ── Periodic status refresh ───────────────────────────────────────
 function startPolling() {
   checkServerStatus();
+  checkVSCode();
   setInterval(checkServerStatus, 15000);
+  setInterval(checkVSCode, 8000);
   setInterval(() => { if (state.serverRunning) updateContextBar(); }, 10000);
 }
 

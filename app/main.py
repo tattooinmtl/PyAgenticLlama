@@ -845,6 +845,61 @@ async def mcp_call(name: str, body: dict):
     except Exception as e:
         raise HTTPException(500, str(e))
 
+# ── VS Code bridge ────────────────────────────────────────────────
+
+VS_CODE_PORT = 3333   # Must match the port in the VS Code extension settings
+
+@app.get('/api/vscode/status')
+async def vscode_status():
+    """Check whether the VS Code extension bridge is running."""
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.get(f'http://127.0.0.1:{VS_CODE_PORT}/ping', timeout=2.0)
+            return {'connected': True, **r.json()}
+    except Exception:
+        return {'connected': False, 'status': 'not running'}
+
+class VSCodeSend(BaseModel):
+    code: str
+    language: str = ''
+    filename: str = ''
+    project_path: str = ''
+
+@app.post('/api/vscode/send')
+async def vscode_send(req: VSCodeSend):
+    """Forward a code block to the VS Code extension."""
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(
+                f'http://127.0.0.1:{VS_CODE_PORT}/receive',
+                json=req.model_dump(),
+                timeout=5.0,
+            )
+            r.raise_for_status()
+            return {'status': 'sent'}
+    except Exception as e:
+        raise HTTPException(503,
+            f'VS Code not connected — install the PyAgenticLlama extension '
+            f'and restart VS Code. ({e})')
+
+@app.post('/api/vscode/open-folder')
+async def vscode_open_folder(body: dict):
+    """Tell VS Code to open a folder as workspace."""
+    folder = body.get('folder', '')
+    if not folder:
+        raise HTTPException(400, 'folder is required')
+    try:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(
+                f'http://127.0.0.1:{VS_CODE_PORT}/open-folder',
+                json={'folder': folder},
+                timeout=5.0,
+            )
+            r.raise_for_status()
+            return {'status': 'ok'}
+    except Exception as e:
+        raise HTTPException(503, str(e))
+
 # ── Test Skill ─────────────────────────────────────────────────────
 
 class TestSkillRequest(BaseModel):
