@@ -576,17 +576,23 @@
 <div class="modal-overlay" id="test-skill-modal">
   <div class="modal-box narrow">
     <div class="modal-title">🧪 Test Skill</div>
-    <div id="test-skill-name" style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:4px"></div>
+    <div id="test-skill-name" style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:6px"></div>
+
+    <!-- Parameter hints — auto-generated from skill schema -->
+    <div id="test-skill-hints" style="display:none; background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:11px; line-height:1.8; margin-bottom:6px"></div>
+
     <div class="form-group">
-      <label>Arguments (JSON object)</label>
-      <textarea id="test-skill-args" rows="5" placeholder='{"query": "hello world"}'>{}</textarea>
+      <label>Arguments — edit the values below, then click ▶ Run</label>
+      <textarea id="test-skill-args" rows="6" placeholder='{"query": "test"}'>{}</textarea>
     </div>
+
     <div id="test-skill-output" style="display:none">
       <div class="code-output" style="margin-top:4px">
         <div class="code-output-header" id="test-skill-status">Result</div>
-        <div class="code-output-body" id="test-skill-result" style="max-height:200px"></div>
+        <div class="code-output-body" id="test-skill-result" style="max-height:220px"></div>
       </div>
     </div>
+
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('test-skill-modal')">Close</button>
       <button class="btn btn-primary" id="test-skill-run-btn" onclick="runTestSkill()">▶ Run</button>

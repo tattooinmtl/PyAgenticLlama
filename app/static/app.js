@@ -840,13 +840,20 @@ async function loadSkills() {
           <label class="switch"><input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleSkill('${s.id}', this.checked)"><span class="slider"></span></label>
         </div>
         <div class="skill-desc">${escHtml(s.description)}</div>
-        <div class="skill-footer">
+        <div class="skill-footer" data-skillid="${s.id}">
           <span class="skill-type">${s.action_type}</span>
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="openTestSkillModal('${s.id}', '${escHtml(s.name)}')" title="Test skill">▶</button>
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="openSkillModal(${JSON.stringify(s)})" title="Edit">✏️</button>
-          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteSkill('${s.id}')" title="Delete">🗑</button>
+          <button class="btn btn-ghost btn-sm btn-icon" title="Test skill">▶</button>
+          <button class="btn btn-ghost btn-sm btn-icon" title="Edit">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" title="Delete">🗑</button>
         </div>
       `;
+      // Attach all button handlers via closure — never JSON in onclick attrs
+      const footer = card.querySelector('.skill-footer');
+      const [runBtn, editBtn, delBtn] = footer.querySelectorAll('button');
+      runBtn.onclick  = () => openTestSkillModal(s.id, s.name);
+      editBtn.onclick = () => openSkillModal(s);
+      delBtn.onclick  = () => deleteSkill(s.id);
+
       list.appendChild(card);
     });
   } catch (e) {
@@ -1593,11 +1600,49 @@ async function saveMcpServer() {
 
 let _testSkillId = null;
 
-function openTestSkillModal(skillId, skillName) {
+async function openTestSkillModal(skillId, skillName) {
   _testSkillId = skillId;
   document.getElementById('test-skill-name').textContent = skillName;
-  document.getElementById('test-skill-args').value = '{}';
   document.getElementById('test-skill-output').style.display = 'none';
+
+  // Build a filled argument template from the skill's parameter schema
+  try {
+    const skills = await API.get('/api/skills');
+    const skill  = skills.find(s => s.id === skillId);
+    const schema = skill?.parameters || {};
+    const props  = schema.properties || {};
+    const required = schema.required || [];
+
+    // Auto-fill each property with a sensible placeholder value
+    const template = {};
+    for (const [key, def] of Object.entries(props)) {
+      if (def.type === 'string')  template[key] = def.example ?? (required.includes(key) ? `your ${key} here` : '');
+      else if (def.type === 'integer' || def.type === 'number') template[key] = def.default ?? 5;
+      else if (def.type === 'boolean') template[key] = def.default ?? true;
+      else if (def.type === 'array')   template[key] = [];
+      else template[key] = null;
+    }
+
+    const argsEl    = document.getElementById('test-skill-args');
+    const hintsEl   = document.getElementById('test-skill-hints');
+
+    argsEl.value = JSON.stringify(template, null, 2);
+
+    // Show parameter hints (name: description)
+    if (Object.keys(props).length && hintsEl) {
+      hintsEl.innerHTML = Object.entries(props).map(([k, d]) => {
+        const req = required.includes(k) ? '<span style="color:var(--red)"> *</span>' : '';
+        const desc = d.description ? ` — ${escHtml(d.description)}` : '';
+        return `<div><code style="color:var(--cyan)">${escHtml(k)}</code>${req}<span style="color:var(--text3)">${desc}</span></div>`;
+      }).join('');
+      hintsEl.style.display = '';
+    } else if (hintsEl) {
+      hintsEl.style.display = 'none';
+    }
+  } catch (e) {
+    document.getElementById('test-skill-args').value = '{}';
+  }
+
   openModal('test-skill-modal');
 }
 
