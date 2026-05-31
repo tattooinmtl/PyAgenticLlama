@@ -16,7 +16,7 @@
 - **Collapsible thinking blocks** — models like Qwen3 that emit `<think>` tags show a collapsible reasoning panel
 - **Stop generation** button — cancel mid-stream, keeps whatever arrived
 - **Auto context compaction** — when context hits 80%, old messages are summarized automatically
-- **Context bar** — live token usage with color indicator (green → yellow → red)
+- **Context bar** — live token count fills as the model streams, color indicator (green → yellow → red), denominator updates instantly when you change context size
 
 ### AI Provider Support
 - **Local llama.cpp** — fully private, no internet required
@@ -56,8 +56,10 @@ Create unlimited custom personalities with avatar color, icon, system prompt, te
 - **Python skills** — define `execute(**kwargs)`; access vault secrets with `vault_get("KEY")`
 - **Webhook skills** — POST to any HTTP endpoint
 - **Auto-discovery** — drop a `.py` file with `execute()` into `app/skills/` and it registers on next startup
-- Built-in snippet libraries: Python, JavaScript, HTML/JS, SQL, Bash, Arduino
-- Toggle skills on/off; enabled skills inject as tools into every request
+- **Personality-based filtering** — each skill is tagged to a personality (`coder`, `creative`, `analyst`, `general`); only relevant skills are sent as tools when that personality is active
+- Built-in snippet libraries: Python, JavaScript, HTML/JS, SQL, Bash, Arduino — all tagged to the `coder` personality
+- **Book Writer skill** (Creative) — builds a compact Book Bible from a multi-chapter novel so the AI can continue writing with full story awareness inside a small context window
+- Toggle skills on/off; personality badge shown on each skill card
 
 ### Brain / Memory
 - Persistent memory in SQLite — facts, preferences, project notes
@@ -76,7 +78,20 @@ Create unlimited custom personalities with avatar color, icon, system prompt, te
 - App menu bar — File, Edit, View, Model, Settings, Tools, Agent, Help
 - Dark theme, tabbed left/right panels, floating Console and Terminal windows
 - Coding session mode (`/coding`) with VS Code integration for direct file delivery
+- **Embedded terminal** — run shell commands directly in the app; `pip install`, `npm install` and other long commands supported (5-min timeout)
+- **Book Mode badge** — auto-detects `book.json` in workspace; `/bookcontext` command builds a Book Bible so the AI writes new chapters with full story awareness
+- **Free RAM button** — opens the embedded terminal and runs a RAM cleanup script
 - MCP server support for extended tool ecosystems
+
+### Launch Modes (`start-app.bat`)
+
+Choose your hardware mode at startup — the load panel pre-fills automatically:
+
+| Mode       | GPU Layers | Context | Flash Attn | Best for                  |
+|------------|------------|---------|------------|---------------------------|
+| CPU Only   | 0          | 16 384  | off        | Integrated GPU, low VRAM  |
+| Vulkan     | 8          | 8 192   | off        | AMD/Intel discrete GPU    |
+| CUDA       | 35         | 4 096   | on         | NVIDIA GPU 6 GB+ VRAM     |
 
 ---
 
