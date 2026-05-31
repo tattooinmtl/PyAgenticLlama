@@ -241,6 +241,9 @@
       </div>
     </main>
 
+    <!-- Right Panel collapse toggle -->
+    <button id="rp-toggle-btn" onclick="toggleRightPanel()" title="Collapse/expand right panel">‹</button>
+
     <!-- Right Panel -->
     <aside class="right-panel" id="right-panel">
       <div class="panel-tabs">
@@ -551,35 +554,61 @@
 <!-- ── CodingSpace Panel (right half of split layout) ─────────── -->
 <div id="cs-panel">
 
+  <!-- Top bar: root path + VS Code + close -->
   <div id="cs-panel-header">
-    <span id="cs-ws-label" title="Shared workspace folder">🗂 CodingSpace</span>
+    <span id="cs-root-label" title="">🗂 CodingSpace</span>
     <div id="cs-header-actions">
-      <button class="btn btn-ghost btn-sm" onclick="csNewFile()" title="New file">+ New</button>
-      <button class="btn btn-ghost btn-sm" onclick="csOpenInVSCode()" title="Open workspace in VS Code">📂 VS Code</button>
-      <button class="btn btn-ghost btn-sm" onclick="toggleCodingSpace()" title="Close CodingSpace">✕</button>
+      <button class="btn btn-ghost btn-sm" onclick="csOpenInVSCode()" title="Open root folder in VS Code">📂 VS Code</button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleCodingSpace()" title="Close">✕</button>
     </div>
   </div>
 
   <div id="cs-body">
 
-    <!-- File tree -->
-    <div id="cs-tree">
-      <div id="cs-tree-header">
-        <span style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Files</span>
-        <button class="btn btn-ghost btn-sm" onclick="csRefreshTree()" title="Refresh" style="padding:1px 6px;font-size:11px">↻</button>
+    <!-- ── Left sidebar: file tree ──────────────────────────── -->
+    <div id="cs-sidebar">
+      <div id="cs-sidebar-toolbar">
+        <span>Files</span>
+        <div style="display:flex;gap:2px">
+          <button class="cs-tb-btn" onclick="csStartCreate('file')"  title="New File">+ File</button>
+          <button class="cs-tb-btn" onclick="csStartCreate('dir')"   title="New Folder">+ Dir</button>
+          <button class="cs-tb-btn" onclick="csRefreshTree()"        title="Refresh">↻</button>
+        </div>
       </div>
+
+      <!-- Inline create row -->
+      <div id="cs-create-row" style="display:none">
+        <span id="cs-create-icon" style="flex-shrink:0">📄</span>
+        <input id="cs-create-name" autocomplete="off" spellcheck="false" placeholder="name…"
+               onkeydown="if(event.key==='Enter')csConfirmCreate();if(event.key==='Escape')csCancelCreate()">
+        <button class="cs-tb-btn" onclick="csConfirmCreate()" title="Create">✓</button>
+        <button class="cs-tb-btn" onclick="csCancelCreate()"  title="Cancel">✕</button>
+      </div>
+
       <div id="cs-tree-list"></div>
     </div>
 
-    <!-- Editor -->
+    <!-- ── Right: editor + preview ──────────────────────────── -->
     <div id="cs-editor-pane">
+
+      <!-- Editor toolbar -->
       <div id="cs-editor-toolbar">
-        <input type="text" id="cs-filename" placeholder="filename.py" autocomplete="off" spellcheck="false">
-        <button class="btn btn-primary btn-sm"  onclick="csSave()" title="Save to workspace">💾 Save</button>
-        <button class="btn btn-ghost btn-sm"    onclick="csSendToVSCode()" title="Send to VS Code as new tab">⌗ VS Code</button>
-        <button class="btn btn-ghost btn-sm"    onclick="csDeleteFile()" title="Delete file from workspace" id="cs-delete-btn" style="display:none;color:var(--red)">🗑</button>
+        <span id="cs-editor-filename">—</span>
+        <div style="display:flex;gap:4px;margin-left:auto;flex-shrink:0">
+          <button class="cs-tb-btn" id="cs-preview-btn" onclick="csTogglePreview()" style="display:none">👁 Preview</button>
+          <button class="cs-tb-btn cs-tb-primary" onclick="csSave()">💾 Save</button>
+          <button class="cs-tb-btn" onclick="csSendToVSCode()">⌗ VS Code</button>
+          <button class="cs-tb-btn" id="cs-delete-btn" onclick="csDeleteCurrent()" style="display:none;color:var(--red)">🗑</button>
+        </div>
       </div>
-      <textarea id="cs-editor" spellcheck="false" placeholder="// AI code goes here — click → CS on any code block, or create a new file"></textarea>
+
+      <!-- Editor / Preview switcher -->
+      <div id="cs-content-area">
+        <textarea id="cs-editor" spellcheck="false"
+          placeholder="Open a file from the tree, or click 'Code Space' on an AI code block"></textarea>
+        <iframe id="cs-preview-frame" style="display:none" sandbox="allow-scripts allow-same-origin"></iframe>
+      </div>
+
       <div id="cs-editor-status"></div>
     </div>
 
@@ -691,8 +720,13 @@
     <div class="form-group">
       <label>Project Folder</label>
       <div style="display:flex;gap:6px">
-        <input type="text" id="cs-folder" placeholder="C:\Users\ThePa\Projects\..." style="flex:1">
-        <button class="btn btn-ghost btn-sm" onclick="browseCodingFolder()">Browse</button>
+        <input type="text" id="cs-folder" placeholder="C:\Users\ThePa\Projects\MyApp" style="flex:1"
+               oninput="document.getElementById('cs-vscode-open').style.display=''">
+        <button class="btn btn-ghost btn-sm" onclick="browseCodingFolder()" title="Browse for an existing folder">Browse</button>
+        <button class="btn btn-ghost btn-sm" onclick="csCreateProjectFolder()" title="Create this folder on disk">Create</button>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:3px">
+        Type a path and click <strong>Create</strong> to make the folder, or <strong>Browse</strong> to pick an existing one.
       </div>
       <div id="cs-vscode-open" style="display:none;margin-top:4px">
         <button class="btn btn-ghost btn-sm" onclick="openFolderInVSCode()" style="width:100%">

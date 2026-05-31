@@ -564,6 +564,77 @@ def clear_ctx(conv_id: str = 'default'):
     get_context(conv_id).clear()
     return {'status': 'cleared'}
 
+# ── Filesystem (general — any path on the user's PC) ─────────────
+
+class FsSave(BaseModel):
+    path: str
+    content: str
+
+class FsMkdir(BaseModel):
+    path: str
+
+_FS_IGNORE = {'.git', '__pycache__', 'node_modules', '.venv', 'venv',
+              '.idea', '.mypy_cache', '.pytest_cache', 'dist', 'build'}
+
+def _build_fs_tree(p: Path, depth: int = 0, max_depth: int = 6) -> dict | None:
+    if not p.exists() or depth > max_depth:
+        return None
+    if p.is_file():
+        return {'name': p.name, 'path': str(p).replace('\\', '/'),
+                'isDir': False, 'ext': p.suffix.lstrip('.').lower()}
+    if p.is_dir():
+        if depth > 0 and (p.name in _FS_IGNORE or p.name.startswith('.')):
+            return None
+        children = []
+        try:
+            for item in sorted(p.iterdir(),
+                               key=lambda x: (not x.is_dir(), x.name.lower())):
+                node = _build_fs_tree(item, depth + 1, max_depth)
+                if node:
+                    children.append(node)
+        except PermissionError:
+            pass
+        return {'name': p.name, 'path': str(p).replace('\\', '/'),
+                'isDir': True, 'children': children}
+    return None
+
+@app.get('/api/fs/tree')
+def fs_tree(root: str = Query(...)):
+    p = Path(root)
+    if not p.exists() or not p.is_dir():
+        raise HTTPException(404, 'Directory not found')
+    return _build_fs_tree(p)
+
+@app.get('/api/fs/read')
+def fs_read(path: str = Query(...)):
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(404, 'File not found')
+    return {'content': p.read_text(encoding='utf-8', errors='replace'), 'path': str(p)}
+
+@app.post('/api/fs/save')
+def fs_save(req: FsSave):
+    p = Path(req.path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(req.content, encoding='utf-8')
+    return {'saved': str(p), 'size': len(req.content)}
+
+@app.post('/api/fs/mkdir')
+def fs_mkdir(req: FsMkdir):
+    p = Path(req.path)
+    p.mkdir(parents=True, exist_ok=True)
+    return {'created': str(p), 'path': str(p).replace('\\', '/')}
+
+@app.delete('/api/fs/delete')
+def fs_delete(path: str = Query(...)):
+    import shutil
+    p = Path(path)
+    if p.is_dir():
+        shutil.rmtree(p, ignore_errors=True)
+    elif p.exists():
+        p.unlink()
+    return {'deleted': str(p)}
+
 # ── Workspace ────────────────────────────────────────────────────
 
 class WorkspaceSave(BaseModel):

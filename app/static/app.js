@@ -676,7 +676,8 @@ function renderMarkdown(text) {
           <button class="code-btn" onclick="copyCodeBlock('${id}', this)">📋 Copy</button>
           ${isRunnable    ? `<button class="code-btn code-btn-run"     onclick="runCodeBlock('${id}')">▶ Run</button>` : ''}
           ${isPreviewable ? `<button class="code-btn code-btn-preview" onclick="previewCodeBlock('${id}')">👁 Preview</button>` : ''}
-          <button class="code-btn code-btn-cs"     onclick="sendToCS('${id}')"     title="Send to CodingSpace">→ CS</button>
+          <button class="code-btn code-btn-cs"    onclick="sendToCS('${id}')"    title="Open in CodingSpace as new file">Code Space</button>
+          <button class="code-btn code-btn-apply" onclick="applyToCS('${id}')"   title="Apply to currently open CS file">Apply</button>
           <button class="code-btn code-btn-vscode" onclick="sendToVSCode('${id}')" title="Send to VS Code as new tab">⌗ VS Code</button>
         </div>
       </div>
@@ -1553,145 +1554,284 @@ CODING RULES:
 
 // ── CodingSpace ───────────────────────────────────────────────────
 
-let _csCurrentFile = null;   // relative path of the file open in editor
+const LANG_EXT = { python:'py',js:'js',javascript:'js',typescript:'ts',html:'html',
+  css:'css',bash:'sh',sql:'sql',json:'json',yaml:'yaml',rust:'rs',go:'go',
+  java:'java',cpp:'cpp',csharp:'cs',ruby:'rb',php:'php',markdown:'md',text:'txt' };
+const EXT_LANG = Object.fromEntries(
+  Object.entries(LANG_EXT).map(([l,e])=>[e,l]).concat([['py','python'],['sh','bash'],['md','markdown'],['yml','yaml']])
+);
+const PREVIEWABLE_EXT = new Set(['html','htm','svg','css','js']);
 
-async function toggleCodingSpace() {
+let _csRoot     = '';          // absolute path of the CodingSpace root dir
+let _csFile     = null;        // { path (abs), name, ext }
+let _csModified = false;
+let _csCreating = null;        // 'file' | 'dir' | null
+let _csSelDir   = '';          // last selected directory (for new file placement)
+let _csPreviewing = false;
+
+// ── Open / close ──────────────────────────────────────────────────
+
+async function toggleCodingSpace(rootOverride) {
   const panel = document.getElementById('cs-panel');
+  if (rootOverride) _csRoot = rootOverride;
+  if (!_csRoot) {
+    const info = await API.get('/api/workspace').catch(() => null);
+    _csRoot = info?.path || '';
+  }
   state.csOpen = !state.csOpen;
+  if (rootOverride) state.csOpen = true;
   panel.classList.toggle('cs-open', state.csOpen);
   if (state.csOpen) {
+    _csUpdateHeader();
     await csRefreshTree();
-    _csStatus('Workspace ready — drop any code block here with → CS');
+    _csStatus('Ready');
   }
 }
 
-async function csRefreshTree() {
-  try {
-    const info  = await API.get('/api/workspace');
-    document.getElementById('cs-ws-label').textContent = `🗂 ${info.name}`;
-    document.getElementById('cs-ws-label').title = info.path;
-
-    const files = await API.get('/api/workspace/files');
-    const list  = document.getElementById('cs-tree-list');
-    list.innerHTML = '';
-    if (!files.length) {
-      list.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text3)">No files yet</div>';
-      return;
-    }
-    files.forEach(f => {
-      const el = document.createElement('div');
-      el.className = 'cs-tree-item' + (f.path === _csCurrentFile ? ' active' : '');
-      el.textContent = f.path;
-      el.title = f.path;
-      el.onclick = () => csOpenFile(f.path);
-      list.appendChild(el);
-    });
-  } catch (e) { _csStatus('Could not load workspace files', true); }
+function _csUpdateHeader() {
+  const el = document.getElementById('cs-root-label');
+  if (el) {
+    const short = _csRoot ? _csRoot.split(/[\\/]/).pop() : 'workspace';
+    el.textContent = `🗂 ${short}`;
+    el.title = _csRoot;
+  }
 }
 
-async function csOpenFile(relPath) {
+// ── Tree ──────────────────────────────────────────────────────────
+
+async function csRefreshTree() {
+  if (!_csRoot) return;
+  const list = document.getElementById('cs-tree-list');
+  list.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text3)">Loading…</div>';
   try {
-    const data = await API.get(`/api/workspace/read?path=${encodeURIComponent(relPath)}`);
-    _csCurrentFile = relPath;
-    document.getElementById('cs-filename').value = relPath;
-    document.getElementById('cs-editor').value   = data.content;
-    document.getElementById('cs-delete-btn').style.display = '';
-    _csStatus(`Opened: ${relPath}`);
-    _csHighlightTree(relPath);
-  } catch (e) { _csStatus(`Could not open ${relPath}`, true); }
+    const tree = await API.get(`/api/fs/tree?root=${encodeURIComponent(_csRoot)}`);
+    list.innerHTML = '';
+    if (!tree?.children?.length) {
+      list.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text3)">Empty folder — create a file to start</div>';
+      return;
+    }
+    _csSelDir = _csRoot;
+    tree.children.forEach(node => _csRenderNode(node, list, 0));
+  } catch (e) { list.innerHTML = `<div style="padding:8px 10px;font-size:11px;color:var(--red)">Error: ${escHtml(e.message)}</div>`; }
+}
+
+function _csRenderNode(node, container, depth) {
+  const row = document.createElement('div');
+  row.className = 'cs-node';
+  row.style.paddingLeft = (8 + depth * 14) + 'px';
+  row.dataset.path = node.path;
+
+  if (node.isDir) {
+    const toggle = document.createElement('span');
+    toggle.className = 'cs-node-toggle'; toggle.textContent = '▶';
+    const icon = document.createElement('span');
+    icon.className = 'cs-node-icon'; icon.textContent = '📁';
+    const name = document.createElement('span');
+    name.className = 'cs-node-name'; name.textContent = node.name;
+    row.append(toggle, icon, name);
+    container.appendChild(row);
+
+    const childWrap = document.createElement('div');
+    childWrap.className = 'cs-children'; childWrap.style.display = 'none';
+    container.appendChild(childWrap);
+
+    row.onclick = () => {
+      const open = childWrap.style.display !== 'none';
+      childWrap.style.display = open ? 'none' : '';
+      toggle.textContent = open ? '▶' : '▼';
+      icon.textContent   = open ? '📁' : '📂';
+      _csSelDir = node.path;
+    };
+
+    if (node.children) node.children.forEach(c => _csRenderNode(c, childWrap, depth + 1));
+  } else {
+    const icon = document.createElement('span');
+    icon.className = 'cs-node-icon'; icon.textContent = '📄';
+    const name = document.createElement('span');
+    name.className = 'cs-node-name'; name.textContent = node.name;
+    const del = document.createElement('span');
+    del.className = 'cs-node-del'; del.textContent = '×'; del.title = 'Delete';
+    del.onclick = e => { e.stopPropagation(); _csDeletePath(node.path, node.name); };
+    row.append(icon, name, del);
+    row.onclick = () => csOpenByPath(node.path, node.name, node.ext || '');
+    if (_csFile?.path === node.path) row.classList.add('cs-active');
+    container.appendChild(row);
+  }
+}
+
+// ── File operations ───────────────────────────────────────────────
+
+async function csOpenByPath(absPath, name, ext) {
+  try {
+    const data = await API.get(`/api/fs/read?path=${encodeURIComponent(absPath)}`);
+    _csFile = { path: absPath, name, ext: ext || absPath.split('.').pop() };
+    _csModified = false;
+    _csPreviewing = false;
+
+    document.getElementById('cs-editor').value         = data.content;
+    document.getElementById('cs-editor').style.display = '';
+    document.getElementById('cs-preview-frame').style.display = 'none';
+    document.getElementById('cs-editor-filename').textContent = name;
+    document.getElementById('cs-delete-btn').style.display    = '';
+
+    const prevBtn = document.getElementById('cs-preview-btn');
+    prevBtn.style.display = PREVIEWABLE_EXT.has(_csFile.ext) ? '' : 'none';
+
+    _csStatus(`${name} — ${data.content.split('\n').length} lines`);
+    _csHighlightActive(absPath);
+  } catch (e) { _csStatus(`Cannot open: ${e.message}`, true); }
 }
 
 async function csSave() {
-  const path    = document.getElementById('cs-filename').value.trim();
+  if (!_csFile) { _csStatus('No file open', true); return; }
   const content = document.getElementById('cs-editor').value;
-  if (!path) { _csStatus('Enter a filename first', true); return; }
   try {
-    await API.post('/api/workspace/save', { path, content });
-    _csCurrentFile = path;
-    document.getElementById('cs-delete-btn').style.display = '';
-    _csStatus(`Saved: ${path}`);
+    await API.post('/api/fs/save', { path: _csFile.path, content });
+    _csModified = false;
+    _csStatus(`Saved: ${_csFile.name}`);
     await csRefreshTree();
   } catch (e) { _csStatus('Save failed: ' + e.message, true); }
 }
 
-async function csDeleteFile() {
-  if (!_csCurrentFile) return;
-  if (!confirm(`Delete ${_csCurrentFile}?`)) return;
+async function csDeleteCurrent() {
+  if (!_csFile) return;
+  if (!confirm(`Delete ${_csFile.name}?`)) return;
+  await _csDeletePath(_csFile.path, _csFile.name);
+}
+
+async function _csDeletePath(absPath, name) {
+  if (!confirm(`Delete ${name}?`)) return;
   try {
-    await API.del(`/api/workspace/file?path=${encodeURIComponent(_csCurrentFile)}`);
-    _csCurrentFile = null;
-    document.getElementById('cs-filename').value = '';
-    document.getElementById('cs-editor').value   = '';
-    document.getElementById('cs-delete-btn').style.display = 'none';
-    _csStatus('File deleted');
+    await API.del(`/api/fs/delete?path=${encodeURIComponent(absPath)}`);
+    if (_csFile?.path === absPath) {
+      _csFile = null; _csModified = false;
+      document.getElementById('cs-editor').value            = '';
+      document.getElementById('cs-editor-filename').textContent = '—';
+      document.getElementById('cs-delete-btn').style.display = 'none';
+      document.getElementById('cs-preview-btn').style.display = 'none';
+    }
+    _csStatus(`Deleted: ${name}`);
     await csRefreshTree();
   } catch (e) { _csStatus('Delete failed: ' + e.message, true); }
 }
 
-function csNewFile() {
-  _csCurrentFile = null;
-  document.getElementById('cs-filename').value = '';
-  document.getElementById('cs-editor').value   = '';
-  document.getElementById('cs-delete-btn').style.display = 'none';
-  document.getElementById('cs-filename').focus();
-  _csStatus('New file — enter a filename and start coding');
-  _csHighlightTree(null);
+// ── Inline create (+ File / + Dir) ───────────────────────────────
+
+function csStartCreate(type) {
+  _csCreating = type;
+  document.getElementById('cs-create-icon').textContent = type === 'dir' ? '📁' : '📄';
+  document.getElementById('cs-create-name').value       = '';
+  document.getElementById('cs-create-row').style.display = '';
+  document.getElementById('cs-create-name').focus();
 }
 
+async function csConfirmCreate() {
+  const name = document.getElementById('cs-create-name').value.trim();
+  if (!name) { csCancelCreate(); return; }
+  const dir  = _csSelDir || _csRoot;
+  const full = dir.replace(/[\\/]+$/, '') + '/' + name;
+  try {
+    if (_csCreating === 'dir') {
+      await API.post('/api/fs/mkdir', { path: full });
+      _csStatus(`Folder created: ${name}`);
+    } else {
+      await API.post('/api/fs/save', { path: full, content: '' });
+      await csOpenByPath(full, name, name.split('.').pop());
+      _csStatus(`Created: ${name}`);
+    }
+    await csRefreshTree();
+  } catch (e) { _csStatus('Create failed: ' + e.message, true); }
+  csCancelCreate();
+}
+
+function csCancelCreate() {
+  _csCreating = null;
+  document.getElementById('cs-create-row').style.display = 'none';
+}
+
+// ── Preview (HTML/CSS/JS) ─────────────────────────────────────────
+
+function csTogglePreview() {
+  if (!_csFile) return;
+  _csPreviewing = !_csPreviewing;
+  const editor = document.getElementById('cs-editor');
+  const frame  = document.getElementById('cs-preview-frame');
+  const btn    = document.getElementById('cs-preview-btn');
+  if (_csPreviewing) {
+    const content = editor.value;
+    const blob    = new Blob([content], { type: _csFile.ext === 'css' ? 'text/css' : 'text/html' });
+    frame.src = URL.createObjectURL(blob);
+    frame.style.display = ''; editor.style.display = 'none';
+    btn.textContent = '✏ Edit';
+  } else {
+    frame.style.display = 'none'; editor.style.display = '';
+    btn.textContent = '👁 Preview';
+  }
+}
+
+// ── VS Code integration ───────────────────────────────────────────
+
 async function csOpenInVSCode() {
+  const root = _csRoot;
   try {
     await API.post('/api/workspace/open-in-vscode', {});
-    toast('Workspace opened in VS Code', 'success');
-  } catch (e) {
-    // Fallback: try the vscode:// URI scheme (works if VS Code is installed)
-    const info = await API.get('/api/workspace').catch(() => null);
-    if (info?.path) {
-      const uri = 'vscode://file/' + info.path.replace(/\\/g, '/');
-      window.open(uri, '_blank');
-    } else {
-      toast('VS Code extension not connected. Install it from vscode-extension/', 'error', 5000);
-    }
+    toast('Opened in VS Code', 'success');
+  } catch {
+    const uri = 'vscode://file/' + (root || '').replace(/\\/g, '/');
+    window.open(uri, '_blank');
   }
 }
 
 async function csSendToVSCode() {
+  if (!_csFile) { toast('No file open in CodingSpace', 'error'); return; }
   const code = document.getElementById('cs-editor').value;
-  const path = document.getElementById('cs-filename').value.trim();
-  if (!code) { toast('Editor is empty', 'error'); return; }
-  const ok = await checkVSCode();
-  if (!ok) { toast('VS Code not connected — save the file first, then open in VS Code', 'error', 5000); return; }
+  const ok   = await checkVSCode();
+  if (!ok) { toast('VS Code not connected', 'error'); return; }
   try {
-    const lang = _extToLang(path.split('.').pop());
     await API.post('/api/vscode/send', {
-      code,
-      language: lang,
-      project_path: '',
-      filename: path,
+      code, language: EXT_LANG[_csFile.ext] || _csFile.ext || 'text',
+      project_path: _csRoot, filename: _csFile.name,
     });
-    toast('Sent to VS Code ✓', 'success');
-  } catch (e) { toast('VS Code send failed: ' + e.message, 'error'); }
+    toast(`Sent ${_csFile.name} to VS Code ✓`, 'success');
+  } catch (e) { toast('VS Code send failed', 'error'); }
 }
 
-// Called by the → CS button on AI code blocks
-function sendToCS(cbId) {
+// ── Code block buttons ────────────────────────────────────────────
+
+// "Code Space" button — creates a new ai-gen file and opens it
+async function sendToCS(cbId) {
   const entry = _codeBlockStore[cbId];
   if (!entry) return;
-
-  // Auto-suggest filename if editor is blank
-  const fnEl = document.getElementById('cs-filename');
-  if (!fnEl.value) {
-    const ext = _langToExt(entry.lang);
-    fnEl.value = `code.${ext}`;
+  if (!_csRoot) {
+    const info = await API.get('/api/workspace').catch(() => null);
+    _csRoot = info?.path || '';
   }
-  document.getElementById('cs-editor').value = entry.code;
-  document.getElementById('cs-delete-btn').style.display = 'none';
-  _csCurrentFile = null;
-
-  if (!state.csOpen) toggleCodingSpace();
-  else _csStatus(`Code loaded from chat (${entry.lang || 'text'}) — edit and Save`);
+  const ext      = LANG_EXT[entry.lang] || entry.lang || 'txt';
+  const filename = `ai-gen-${Date.now()}.${ext}`;
+  const absPath  = _csRoot.replace(/[\\/]+$/, '') + '/' + filename;
+  try {
+    await API.post('/api/fs/save', { path: absPath, content: entry.code });
+    if (!state.csOpen) await toggleCodingSpace(_csRoot);
+    await csOpenByPath(absPath, filename, ext);
+    await csRefreshTree();
+    _csStatus(`New file: ${filename}`);
+  } catch (e) { toast('Could not create file: ' + e.message, 'error'); }
 }
 
-// ── CodingSpace helpers ────────────────────────────────────────────
+// "Apply" button — writes code to the currently open CS file
+function applyToCS(cbId) {
+  const entry = _codeBlockStore[cbId];
+  if (!entry) return;
+  if (!_csFile) {
+    toast('No file open in CodingSpace — use "Code Space" first', 'error', 4000); return;
+  }
+  document.getElementById('cs-editor').value = entry.code;
+  _csModified = true;
+  _csStatus(`Applied to ${_csFile.name} — click Save when ready`);
+  if (!state.csOpen) toggleCodingSpace(_csRoot);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
 
 function _csStatus(msg, isError) {
   const el = document.getElementById('cs-editor-status');
@@ -1700,25 +1840,14 @@ function _csStatus(msg, isError) {
   el.style.color = isError ? 'var(--red)' : 'var(--text3)';
 }
 
-function _csHighlightTree(relPath) {
-  document.querySelectorAll('.cs-tree-item').forEach(el => {
-    el.classList.toggle('active', el.textContent === relPath);
+function _csHighlightActive(absPath) {
+  document.querySelectorAll('.cs-node').forEach(el => {
+    el.classList.toggle('cs-active', el.dataset.path === absPath);
   });
 }
 
-function _langToExt(lang) {
-  const m = { python:'py', javascript:'js', typescript:'ts', html:'html', css:'css',
-               bash:'sh', sql:'sql', json:'json', yaml:'yaml', rust:'rs', go:'go',
-               java:'java', cpp:'cpp', csharp:'cs', ruby:'rb', php:'php', markdown:'md' };
-  return m[lang] || lang || 'txt';
-}
-
-function _extToLang(ext) {
-  const m = { py:'python', js:'javascript', ts:'typescript', html:'html', css:'css',
-               sh:'bash', sql:'sql', json:'json', yml:'yaml', yaml:'yaml', rs:'rust',
-               go:'go', java:'java', cpp:'cpp', cs:'csharp', rb:'ruby', php:'php', md:'markdown' };
-  return m[ext] || ext || 'text';
-}
+function _langToExt(lang) { return LANG_EXT[lang] || lang || 'txt'; }
+function _extToLang(ext)  { return EXT_LANG[ext]  || ext  || 'text'; }
 
 // ── Provider ──────────────────────────────────────────────────────
 
@@ -1857,24 +1986,23 @@ async function _loadProviderBadge() {
 }
 
 async function openCodingModal() {
-  // Check VS Code status when opening
   const vsStatus = document.getElementById('cs-vscode-status');
-  const data = await checkVSCode().then(ok => ({connected: ok})).catch(() => ({connected: false}));
-  if (data.connected) {
-    vsStatus.innerHTML = '<span style="color:var(--green)">✅ VS Code connected — code will be sent automatically</span>';
-    if (vsCode.workspace) {
-      document.getElementById('cs-folder').value = vsCode.workspace;
-    }
-  } else {
-    vsStatus.innerHTML = '<span style="color:var(--yellow)">⚠️ VS Code not connected — run <code>vscode-extension/install.bat</code> and restart VS Code</span>';
-  }
+  const connected = await checkVSCode().catch(() => false);
+  vsStatus.innerHTML = connected
+    ? '<span style="color:var(--green)">✅ VS Code connected</span>'
+    : '<span style="color:var(--text3)">○ VS Code not connected — install <code>vscode-extension/install.bat</code></span>';
 
-  // If session already active, pre-fill
+  // Pre-fill from active session only (never from vsCode.workspace — that caused the LocalAI lock-in bug)
   if (state.codingSession) {
-    document.getElementById('cs-name').value   = state.codingSession.name;
-    document.getElementById('cs-folder').value = state.codingSession.folder;
-    document.getElementById('cs-type').value   = state.codingSession.type;
-    document.getElementById('cs-desc').value   = state.codingSession.description;
+    document.getElementById('cs-name').value   = state.codingSession.name   || '';
+    document.getElementById('cs-folder').value = state.codingSession.folder || '';
+    document.getElementById('cs-type').value   = state.codingSession.type   || '';
+    document.getElementById('cs-desc').value   = state.codingSession.description || '';
+  } else {
+    // Default folder = workspace/ path as a suggestion
+    if (!document.getElementById('cs-folder').value && state.workspacePath) {
+      document.getElementById('cs-folder').placeholder = state.workspacePath + '\\MyProject';
+    }
   }
 
   openModal('coding-modal');
@@ -1896,13 +2024,19 @@ async function startCodingSession() {
   badge.innerHTML = `💻 ${escHtml(name)}`;
   badge.style.display = '';
 
-  // If folder is given, try to open it in VS Code
-  if (folder && vsCode.connected) {
-    try { await API.post('/api/vscode/open-folder', { folder }); } catch (e) { /* silent */ }
+  // Always try to sync VS Code with the project folder
+  if (folder) {
+    _csRoot = folder;
+    API.post('/api/vscode/open-folder', { folder }).catch(() => {});
+  } else {
+    _csRoot = state.workspacePath || '';
   }
 
   closeModal('coding-modal');
   newChat();
+
+  // Auto-open CodingSpace with the project folder as root
+  if (!state.csOpen) toggleCodingSpace(_csRoot || undefined);
 
   // Build the opening message
   let intro = `I'm starting a coding session for **${name}**`;
@@ -1920,6 +2054,16 @@ async function startCodingSession() {
 function browseCodingFolder() {
   window._codingFolderPick = true;
   openFileBrowser();
+}
+
+async function csCreateProjectFolder() {
+  const path = document.getElementById('cs-folder').value.trim();
+  if (!path) { toast('Enter a folder path first', 'error'); return; }
+  try {
+    await API.post('/api/fs/mkdir', { path });
+    toast(`Folder created: ${path}`, 'success');
+    document.getElementById('cs-vscode-open').style.display = '';
+  } catch (e) { toast('Could not create folder: ' + e.message, 'error'); }
 }
 
 // Override selectBrowserModel when in coding folder-pick mode
@@ -2243,9 +2387,9 @@ function initInput() {
     box.style.height = Math.min(box.scrollHeight, 160) + 'px';
 
     const val = box.value;
-    // Show command autocomplete when typing /
+    // Show ALL commands when just "/" is typed; filter as user continues typing
     if (val.startsWith('/') && !val.includes(' ')) {
-      _showCmdDropdown(val);
+      _showCmdDropdown(val === '/' ? null : val);
     } else {
       _hideCmdDropdown();
     }
@@ -2781,6 +2925,20 @@ async function terminalRun() {
   await floatWins.terminal.exec(cmd);
 }
 
+// ── Right panel collapse ──────────────────────────────────────────
+
+function toggleRightPanel() {
+  const rp  = document.getElementById('right-panel');
+  const btn = document.getElementById('rp-toggle-btn');
+  const collapsed = rp.classList.toggle('rp-collapsed');
+  if (btn) btn.textContent = collapsed ? '›' : '‹';
+}
+
+async function _loadWorkspacePath() {
+  const info = await API.get('/api/workspace').catch(() => null);
+  if (info?.path) state.workspacePath = info.path;
+}
+
 // ── Boot ──────────────────────────────────────────────────────────
 
 function _splashLog(msg, status = 'ok') {
@@ -2822,7 +2980,8 @@ async function init() {
     _splashWrap(loadPersonalities(),  'Personalities registered'),
     _splashWrap(loadSkills(),         'Skills indexed'),
     _splashWrap(checkServerStatus(),  'Inference server checked'),
-    _splashWrap(_loadProviderBadge(), 'Provider config loaded'),
+    _splashWrap(_loadProviderBadge(),   'Provider config loaded'),
+    _splashWrap(_loadWorkspacePath(),   'Workspace path resolved'),
   ]);
 
   startPolling();
