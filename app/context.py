@@ -14,12 +14,24 @@ class ContextManager:
     def update_tokens(self, n: int):
         self.total_tokens = max(self.total_tokens, n)
 
+    def _estimated_tokens(self) -> int:
+        """Character-based token estimate (~4 chars/token) used when the server hasn't reported usage yet."""
+        chars = sum(
+            len(m['content']) if isinstance(m['content'], str)
+            else sum(len(p.get('text', '')) for p in m['content'] if isinstance(p, dict))
+            for m in self.messages
+            if isinstance(m, dict) and 'content' in m
+        )
+        return chars // 4
+
+    def _effective_tokens(self) -> int:
+        return self.total_tokens or self._estimated_tokens()
+
     def needs_compaction(self) -> bool:
-        return (self.total_tokens >= self.max_tokens * self.threshold
-                and len(self.messages) >= 4)
+        return self._effective_tokens() >= self.max_tokens * self.threshold and len(self.messages) >= 4
 
     def usage_pct(self) -> float:
-        return min(self.total_tokens / max(self.max_tokens, 1), 1.0)
+        return min(self._effective_tokens() / max(self.max_tokens, 1), 1.0)
 
     def get_messages(self, system: str | None = None) -> list:
         sys_prompt = system or self.system_prompt
@@ -37,10 +49,12 @@ class ContextManager:
         self.total_tokens = 0
 
     def info(self) -> dict:
+        tokens = self._effective_tokens()
+        pct = min(tokens / max(self.max_tokens, 1), 1.0)
         return {
-            'total_tokens': self.total_tokens,
+            'total_tokens': tokens,
             'max_tokens': self.max_tokens,
-            'usage_pct': round(self.usage_pct() * 100, 1),
+            'usage_pct': round(pct * 100, 1),
             'message_count': len(self.messages),
             'needs_compaction': self.needs_compaction(),
         }

@@ -100,6 +100,7 @@ def _autodiscover_py_skills():
             'py_file': py_path.name,
             'webhook_url': '',
             'enabled': True,
+            'personality': 'general',
         }
 
         (SKILLS_DIR / f'{stem}.json').write_text(json.dumps(skill, indent=2))
@@ -135,6 +136,17 @@ def serve_logo():
 @app.get('/api/hardware')
 def hardware():
     return system_info()
+
+@app.get('/api/startup-config')
+def startup_config():
+    """Return defaults set by the launch bat file via environment variables."""
+    return {
+        'backend':     os.environ.get('LLAMA_BACKEND', 'cpu'),
+        'gpu_layers':  int(os.environ.get('LLAMA_GPU_LAYERS', '0')),
+        'flash_attn':  os.environ.get('LLAMA_FLASH_ATTN', 'false').lower() == 'true',
+        'context':     int(os.environ.get('LLAMA_CONTEXT', '16384')),
+    }
+
 
 # ── Models & Filesystem ───────────────────────────────────────────
 
@@ -259,10 +271,12 @@ def browse_filesystem(path: str = ''):
 
 class StartRequest(BaseModel):
     model_path: str
-    context_length: int = 4096
+    context_length: int = 16384
     gpu_layers: int = 20
     server_name: str = 'main'
     mmproj_path: str | None = None
+    flash_attn: bool = False
+    sleep_idle_seconds: int = 300
 
 @app.post('/api/server/start')
 async def start_server(req: StartRequest):
@@ -270,7 +284,11 @@ async def start_server(req: StartRequest):
         raise HTTPException(404, 'Model file not found')
     srv = get_server(req.server_name)
     try:
-        await srv.start(req.model_path, req.context_length, req.gpu_layers, req.mmproj_path)
+        await srv.start(
+            req.model_path, req.context_length, req.gpu_layers, req.mmproj_path,
+            flash_attn=req.flash_attn,
+            sleep_idle_seconds=req.sleep_idle_seconds,
+        )
         ctx = get_context()
         ctx.max_tokens = req.context_length
         ctx.clear()
@@ -465,19 +483,24 @@ class ChatRequest(BaseModel):
     inject_memory: bool = False
     attachments: list[AttachmentItem] = []
 
-def _resolve_persona(pid: str, override_system: str | None) -> tuple[str | None, float, float]:
+def _resolve_persona(pid: str, override_system: str | None) -> tuple[str | None, float, float, float]:
     p = get_personality(pid)
     if not p:
-        return override_system, 0.7, 0.9
+        return override_system, 0.7, 0.9, 0.01
     system = override_system or p.get('system_prompt')
-    return system, float(p.get('temperature', 0.7)), float(p.get('top_p', 0.9))
+    return (system, float(p.get('temperature', 0.7)),
+            float(p.get('top_p', 0.9)), float(p.get('min_p', 0.01)))
 
-def _skills_as_tools() -> list:
+def _skills_as_tools(personality_id: str = 'general') -> list:
     tools = []
     for f in SKILLS_DIR.glob('*.json'):
         try:
             s = json.loads(f.read_text())
             if not s.get('enabled', True):
+                continue
+            skill_personality = s.get('personality', 'general')
+            # Include if: skill is general (all personalities) OR matches active personality
+            if skill_personality != 'general' and skill_personality != personality_id:
                 continue
             tools.append({
                 'type': 'function',
@@ -501,7 +524,10 @@ async def chat(req: ChatRequest):
         raise HTTPException(503, 'No model loaded. Load a model first.')
 
     ctx = get_context(req.conv_id)
-    system, temp, top_p = _resolve_persona(req.personality_id, req.system)
+    # Keep max_tokens in sync with the running server so the context bar is accurate
+    if srv.context_length:
+        ctx.max_tokens = srv.context_length
+    system, temp, top_p, min_p = _resolve_persona(req.personality_id, req.system)
 
     if req.inject_memory and req.message:
         mems = recall(req.message, limit=5)
@@ -525,7 +551,7 @@ async def chat(req: ChatRequest):
 
     ctx.add('user', user_content)
     messages = ctx.get_messages(system)
-    tools = _skills_as_tools()
+    tools = _skills_as_tools(req.personality_id)
 
     payload: dict = {
         'model': provider.get('model', 'local') if provider.get('type') == 'external' else 'local',
@@ -533,7 +559,11 @@ async def chat(req: ChatRequest):
         'stream': req.stream,
         'temperature': temp,
         'top_p': top_p,
+        'min_p': min_p,
     }
+    if req.stream:
+        # Ask llama.cpp to report token usage in the final streaming chunk
+        payload['stream_options'] = {'include_usage': True}
     if tools:
         payload['tools'] = tools
 
@@ -551,6 +581,8 @@ async def _stream_response(srv, payload, ctx, conv_id, user_msg, provider=None):
     model_label = (provider.get('name') or provider.get('model', '')) \
         if provider.get('type') == 'external' else (srv.model_path or '')
     full = ''
+    # Accumulate streamed tool_calls so we can forward them to the client
+    tool_call_accum: dict[int, dict] = {}  # index → {id, name, arguments}
     try:
         async with httpx.AsyncClient(timeout=600) as client:
             async with client.stream('POST', url, json=payload, headers=headers) as resp:
@@ -559,6 +591,15 @@ async def _stream_response(srv, payload, ctx, conv_id, user_msg, provider=None):
                         continue
                     data = raw[6:].strip()
                     if data == '[DONE]':
+                        # If tool calls were streamed, emit them as a single event
+                        if tool_call_accum:
+                            tool_calls = [
+                                {'id': tc.get('id', ''), 'type': 'function',
+                                 'function': {'name': tc.get('name', ''),
+                                              'arguments': tc.get('arguments', '')}}
+                                for tc in tool_call_accum.values()
+                            ]
+                            yield f'data: {json.dumps({"tool_calls": tool_calls})}\n\n'
                         ctx.add('assistant', full)
                         save_conversation(conv_id, user_msg[:60], model_label)
                         add_message(conv_id, 'user', user_msg)
@@ -569,11 +610,29 @@ async def _stream_response(srv, payload, ctx, conv_id, user_msg, provider=None):
                         return
                     try:
                         chunk = json.loads(data)
-                        delta = chunk['choices'][0]['delta'].get('content', '')
-                        if delta:
-                            full += delta
-                            yield f'data: {json.dumps({"content": delta})}\n\n'
-                        usage = chunk.get('usage') or chunk['choices'][0].get('usage')
+                        choice = chunk['choices'][0]
+                        delta = choice.get('delta', {})
+
+                        # Normal text content
+                        content = delta.get('content', '')
+                        if content:
+                            full += content
+                            yield f'data: {json.dumps({"content": content})}\n\n'
+
+                        # Tool call chunks — accumulate by index
+                        for tc in delta.get('tool_calls', []):
+                            idx = tc.get('index', 0)
+                            if idx not in tool_call_accum:
+                                tool_call_accum[idx] = {'id': '', 'name': '', 'arguments': ''}
+                            if tc.get('id'):
+                                tool_call_accum[idx]['id'] = tc['id']
+                            fn = tc.get('function', {})
+                            if fn.get('name'):
+                                tool_call_accum[idx]['name'] += fn['name']
+                            if fn.get('arguments'):
+                                tool_call_accum[idx]['arguments'] += fn['arguments']
+
+                        usage = chunk.get('usage') or choice.get('usage')
                         if usage:
                             ctx.update_tokens(usage.get('total_tokens', 0))
                     except Exception:
@@ -778,6 +837,7 @@ class SkillIn(BaseModel):
     code: str = ''
     webhook_url: str = ''
     enabled: bool = True
+    personality: str = 'general'
 
 @app.get('/api/skills/source')
 def skill_source(id: str = Query(...)):
@@ -909,15 +969,17 @@ async def agent_run(req: AgentRequest):
         raise HTTPException(503, 'No model loaded')
 
     ctx = get_context(req.conv_id)
-    system, temp, top_p = _resolve_persona(req.personality_id, None)
+    system, temp, top_p, min_p = _resolve_persona(req.personality_id, None)
     ctx.add('user', req.message)
 
-    tools = _skills_as_tools()
+    tools = _skills_as_tools(req.personality_id)
     skills_by_name = {}
     for f in SKILLS_DIR.glob('*.json'):
         try:
             s = json.loads(f.read_text())
-            skills_by_name[s['id'].replace('-', '_')] = s
+            skill_personality = s.get('personality', 'general')
+            if skill_personality == 'general' or skill_personality == req.personality_id:
+                skills_by_name[s['id'].replace('-', '_')] = s
         except Exception:
             pass
 
@@ -930,6 +992,7 @@ async def agent_run(req: AgentRequest):
             'stream': False,
             'temperature': temp,
             'top_p': top_p,
+            'min_p': min_p,
         }
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(f'{srv.base_url()}/v1/chat/completions', json=payload)
@@ -987,10 +1050,10 @@ def console_lines(name: str = 'main', after: int = 0):
 # ── Terminal ───────────────────────────────────────────────────────
 
 _term_cwd = str(BASE_DIR)   # Persistent working directory across commands
-_term_history: list[str] = []  # Keep last 200 lines of session output
 
 class TermCmd(BaseModel):
     command: str
+    timeout: int = 300   # caller can override; default 5 min covers pip/npm
 
 @app.post('/api/terminal/exec')
 async def terminal_exec(req: TermCmd):
@@ -1012,20 +1075,21 @@ async def terminal_exec(req: TermCmd):
         except Exception as e:
             return {'output': str(e), 'cwd': _term_cwd, 'returncode': 1}
 
+    timeout = max(10, min(req.timeout, 600))  # clamp 10s – 10 min
     try:
         result = await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: subprocess.run(
                 cmd, shell=True,
                 capture_output=True, text=True,
-                timeout=60, cwd=_term_cwd,
+                timeout=timeout, cwd=_term_cwd,
                 encoding='utf-8', errors='replace',
             )
         )
         out = (result.stdout or '') + (result.stderr or '')
         return {'output': out, 'cwd': _term_cwd, 'returncode': result.returncode}
     except subprocess.TimeoutExpired:
-        return {'output': 'Timed out after 60 seconds.', 'cwd': _term_cwd, 'returncode': -1}
+        return {'output': f'Timed out after {timeout} seconds.', 'cwd': _term_cwd, 'returncode': -1}
     except Exception as e:
         return {'output': str(e), 'cwd': _term_cwd, 'returncode': -1}
 
@@ -1080,7 +1144,7 @@ async def spawn_agent(req: SpawnRequest):
     if not srv.running:
         await srv.start(req.model_path, req.context_length, req.gpu_layers)
     ctx = get_context(f'agent-{req.name}')
-    system, temp, top_p = _resolve_persona(req.personality_id, None)
+    system, temp, top_p, min_p = _resolve_persona(req.personality_id, None)
     ctx.clear()
     ctx.add('user', req.task)
     payload = {
@@ -1088,6 +1152,8 @@ async def spawn_agent(req: SpawnRequest):
         'messages': ctx.get_messages(system),
         'stream': False,
         'temperature': temp,
+        'top_p': top_p,
+        'min_p': min_p,
     }
     async with httpx.AsyncClient(timeout=300) as client:
         resp = await client.post(f'{srv.base_url()}/v1/chat/completions', json=payload)

@@ -150,14 +150,18 @@
         <!-- Server settings -->
         <div class="card">
           <div class="card-title">Server Settings</div>
+          <div style="display:flex; gap:5px; margin-bottom:6px">
+            <button class="btn btn-ghost btn-sm" onclick="applyPreset('cpu')" title="Best for integrated GPU / low VRAM — runs entirely on CPU+RAM">🖥 CPU Only</button>
+            <button class="btn btn-ghost btn-sm" onclick="applyPreset('balanced')" title="Offload a few layers to GPU for a speed boost">⚡ Balanced</button>
+          </div>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px">
             <div>
               <label>GPU Layers</label>
-              <input type="number" id="gpu-layers" value="0" min="0" max="200" title="0 = CPU only (safe). Set higher only if your GPU has enough VRAM.">
+              <input type="number" id="gpu-layers" value="0" min="0" max="200" title="0 = CPU only (best for integrated GPU). Higher = more GPU VRAM used.">
             </div>
             <div>
               <label>Context</label>
-              <input type="number" id="ctx-length" value="4096" min="512" max="131072" step="512">
+              <input type="number" id="ctx-length" value="16384" min="512" max="131072" step="512" oninput="state.contextLength=+this.value; _setContextBar(0, +this.value)">
             </div>
           </div>
           <div style="margin-bottom:8px">
@@ -171,6 +175,12 @@
           <div id="server-loading" style="display:none; margin-top:8px">
             <div class="loading-bar"></div>
             <div style="font-size:11px; color:var(--text3); margin-top:5px; text-align:center" id="load-status">Loading model...</div>
+          </div>
+          <div style="border-top:1px solid var(--border); margin-top:10px; padding-top:8px">
+            <div style="font-size:10px; color:var(--text3); margin-bottom:5px; text-transform:uppercase; letter-spacing:.5px">Memory</div>
+            <div style="display:flex; align-items:center; gap:6px">
+              <button class="btn btn-ghost btn-sm" onclick="freeRam()" title="Open terminal and run RAM cleanup script">🧹 Free RAM</button>
+            </div>
           </div>
         </div>
 
@@ -206,6 +216,7 @@
         <span class="ctx-tokens" id="ctx-tokens">0 / 0</span>
         <span class="tps-badge" id="tps-badge" style="display:none">0 t/s</span>
         <div id="coding-session-badge" style="display:none" onclick="openCodingModal()" title="Active coding session — click to view"></div>
+        <button id="book-mode-badge" class="btn btn-ghost btn-sm" onclick="runBookContext('')" style="display:none" title="">📖 Book Mode</button>
         <button class="btn btn-ghost btn-sm" onclick="compactContext()" title="Compact context">⚡ Compact</button>
         <button class="btn btn-ghost btn-sm" onclick="clearContext()" title="Clear context">✕</button>
         <div style="margin-left:4px; display:flex; gap:4px">
@@ -351,6 +362,18 @@
         <select id="skill-type" onchange="toggleSkillType()">
           <option value="python">Python Code</option>
           <option value="webhook">Webhook URL</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Personality (when is this skill available?)</label>
+        <select id="skill-personality">
+          <option value="general">🌐 General — all personalities</option>
+          <option value="default">🤖 Assistant</option>
+          <option value="coder">💻 Coder</option>
+          <option value="creative">✨ Creative</option>
+          <option value="analyst">📊 Analyst</option>
         </select>
       </div>
     </div>

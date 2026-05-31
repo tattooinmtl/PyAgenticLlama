@@ -1,0 +1,37 @@
+{
+  "id": "book_writer_skill",
+  "name": "Book Writer",
+  "description": "Manages multi-chapter novel context. Actions: list_chapters, summarize_chapter, build_bible, get_context, save_bible. Use to build a Book Bible so the AI can write new chapters without loading all previous chapters at once.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "description": "Action: list_chapters | summarize_chapter | build_bible | get_context | save_bible"
+      },
+      "book_json_path": {
+        "type": "string",
+        "description": "Absolute path to book.json (auto-detected if omitted)"
+      },
+      "chapter_index": {
+        "type": "integer",
+        "description": "0-based chapter index for summarize_chapter action"
+      },
+      "output_path": {
+        "type": "string",
+        "description": "Where to save book-bible.md (defaults to same folder as book.json)"
+      },
+      "content": {
+        "type": "string",
+        "description": "Full markdown content for save_bible action"
+      }
+    },
+    "required": ["action"]
+  },
+  "action_type": "python",
+  "code": "",
+  "py_file": "book_writer_skill.py",
+  "webhook_url": "",
+  "enabled": true,
+  "personality": "creative"
+}

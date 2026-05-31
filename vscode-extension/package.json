@@ -10,6 +10,27 @@
   "activationEvents": ["onStartupFinished"],
   "main": "./extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pyagenticllama-sidebar",
+          "title": "PyAgenticLlama",
+          "icon": "icon.png"
+        }
+      ]
+    },
+    "views": {
+      "pyagenticllama-sidebar": [
+        {
+          "id": "pyagenticllama.statusView",
+          "name": "Status"
+        },
+        {
+          "id": "pyagenticllama.actionsView",
+          "name": "Actions"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "pyagenticllama.showStatus",
@@ -17,17 +38,34 @@
       },
       {
         "command": "pyagenticllama.openApp",
-        "title": "PyAgenticLlama: Open App in Browser"
+        "title": "PyAgenticLlama: Open App in Browser",
+        "icon": "$(globe)"
       },
       {
         "command": "pyagenticllama.openWorkspace",
-        "title": "PyAgenticLlama: Open Shared Workspace Folder"
+        "title": "PyAgenticLlama: Open Shared Workspace Folder",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "pyagenticllama.openProjectFolder",
-        "title": "PyAgenticLlama: Open Project Folder (Browse...)"
+        "title": "PyAgenticLlama: Open Project Folder (Browse...)",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "pyagenticllama.refreshView",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pyagenticllama.refreshView",
+          "when": "view == pyagenticllama.statusView",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "PyAgenticLlama",
       "properties": {

@@ -1,4 +1,4 @@
-import asyncio, httpx
+import asyncio, contextlib, httpx
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
@@ -20,8 +20,9 @@ class LlamaServer:
     def running(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
-    async def start(self, model_path: str, context_length: int = 4096, gpu_layers: int = 0,
-                    mmproj_path: str | None = None):
+    async def start(self, model_path: str, context_length: int = 16384, gpu_layers: int = 0,
+                    mmproj_path: str | None = None, flash_attn: bool = False,
+                    sleep_idle_seconds: int = 300):
         if self.running:
             await self.stop()
         self.model_path = model_path
@@ -36,7 +37,10 @@ class LlamaServer:
             '--port', str(self.port),
             '--host', '127.0.0.1',
             '--parallel', '1',
+            '--sleep-idle-seconds', str(sleep_idle_seconds),
         ]
+        if flash_attn:
+            cmd += ['--flash-attn', 'on']
         if mmproj_path:
             cmd += ['--mmproj', mmproj_path]
         self._log_fh = open(self._log_path, 'w', encoding='utf-8', errors='replace')
@@ -49,19 +53,15 @@ class LlamaServer:
         for _ in range(timeout * 2):
             if not self.running:
                 tail = ''
-                try:
+                with contextlib.suppress(Exception):
                     lines = self._log_path.read_text(errors='replace').splitlines()
                     tail = '\n'.join(lines[-5:])
-                except Exception:
-                    pass
                 raise RuntimeError(f'llama-server ({self.name}) crashed.\n{tail}')
-            try:
+            with contextlib.suppress(Exception):
                 async with httpx.AsyncClient() as c:
                     r = await c.get(f'http://127.0.0.1:{self.port}/health', timeout=1.0)
                     if r.status_code == 200 and r.json().get('status') == 'ok':
                         return
-            except Exception:
-                pass
             await asyncio.sleep(0.5)
         raise TimeoutError(f'Server ({self.name}) not ready after {timeout}s')
 
@@ -75,10 +75,8 @@ class LlamaServer:
         self._proc = None
         self.model_path = None
         if self._log_fh:
-            try:
+            with contextlib.suppress(Exception):
                 self._log_fh.close()
-            except Exception:
-                pass
             self._log_fh = None
 
     def base_url(self) -> str:

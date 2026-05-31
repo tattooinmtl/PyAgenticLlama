@@ -15,6 +15,7 @@ const state = {
   browserPath: 'C:\\',
   browserSelected: null,
   currentTps: 0,
+  contextLength: 0,          // set when model loads; drives live context bar
 };
 
 // True when something can handle a chat request (local server OR external provider)
@@ -232,6 +233,38 @@ function showModelQuickInfo(info) {
 }
 
 // ── Server ────────────────────────────────────────────────────────
+function freeRam() {
+  floatWins.terminal.open();
+  floatWins.terminal.exec('powershell -ExecutionPolicy Bypass -File "C:\\AIFreeRam\\Clear-RAM.ps1"');
+}
+
+async function _applyStartupConfig() {
+  try {
+    const cfg = await API.get('/api/startup-config');
+    if (cfg.gpu_layers !== undefined)
+      document.getElementById('gpu-layers').value = cfg.gpu_layers;
+    if (cfg.context)
+      document.getElementById('ctx-length').value = cfg.context;
+    // Store flash_attn for use when loading
+    state._flashAttn = cfg.flash_attn;
+    state._backend   = cfg.backend;
+  } catch (_) {}
+}
+
+function applyPreset(preset) {
+  const gpuEl = document.getElementById('gpu-layers');
+  const ctxEl = document.getElementById('ctx-length');
+  if (preset === 'cpu') {
+    gpuEl.value = 0;
+    ctxEl.value = 16384;
+    toast('CPU Only preset — gpu_layers=0, context=16K. Best for integrated GPU.', 'info', 4000);
+  } else if (preset === 'balanced') {
+    gpuEl.value = 8;
+    ctxEl.value = 8192;
+    toast('Balanced preset — 8 GPU layers, 8K context. Good for 4–6GB VRAM.', 'info', 4000);
+  }
+}
+
 async function loadModel() {
   const path = document.getElementById('model-select').value || state.selectedModel;
   if (!path) { toast('Select a model first', 'error'); return; }
@@ -247,10 +280,13 @@ async function loadModel() {
       model_path: path,
       context_length: ctx,
       gpu_layers: gpu,
+      // Use startup config flash_attn if set; otherwise only enable for GPU mode
+      flash_attn: state._flashAttn !== undefined ? state._flashAttn : gpu > 0,
       server_name: 'main',
       mmproj_path: state.modelInfo?.mmproj_path || null,
     });
     state.serverRunning = true;
+    state.contextLength = ctx;   // remember for live bar updates
     updateServerStatus(true);
     toast('Model loaded and ready', 'success');
     updateContextBar();
@@ -294,6 +330,7 @@ async function checkServerStatus() {
   try {
     const s = await API.get('/api/server/status');
     state.serverRunning = s.running;
+    if (s.running && s.context_length) state.contextLength = s.context_length;
     updateServerStatus(s.running);
     if (s.running) {
       updateContextBar();
@@ -302,15 +339,20 @@ async function checkServerStatus() {
 }
 
 // ── Context Bar ───────────────────────────────────────────────────
+function _setContextBar(usedTokens, maxTokens) {
+  const fill   = document.getElementById('ctx-fill');
+  const tokens = document.getElementById('ctx-tokens');
+  if (!fill || !tokens) return;
+  const pct = maxTokens > 0 ? Math.min((usedTokens / maxTokens) * 100, 100) : 0;
+  fill.style.width = pct + '%';
+  fill.className = 'ctx-fill' + (pct > 80 ? ' crit' : pct > 60 ? ' warn' : '');
+  tokens.textContent = `${Math.round(usedTokens).toLocaleString()} / ${maxTokens.toLocaleString()} tokens`;
+}
+
 async function updateContextBar() {
   try {
     const info = await API.get(`/api/context?conv_id=${state.convId}`);
-    const fill = document.getElementById('ctx-fill');
-    const tokens = document.getElementById('ctx-tokens');
-    const pct = info.usage_pct;
-    fill.style.width = pct + '%';
-    fill.className = 'ctx-fill' + (pct > 80 ? ' crit' : pct > 60 ? ' warn' : '');
-    tokens.textContent = `${info.total_tokens.toLocaleString()} / ${info.max_tokens.toLocaleString()} tokens`;
+    _setContextBar(info.total_tokens, info.max_tokens);
     if (info.needs_compaction) {
       toast('Context is nearly full — consider compacting', 'info', 4000);
     }
@@ -562,6 +604,8 @@ async function streamChat(msg, systemOverride = null, attachments = []) {
           tokenCount += delta.length / 4;  // ~4 chars per token
           const elapsed = (Date.now() - firstTokenTime) / 1000;
           if (elapsed > 0) updateTps(tokenCount / elapsed);
+          // Live bar: use frontend counter so the bar moves as tokens arrive
+          if (state.contextLength) _setContextBar(tokenCount, state.contextLength);
 
           // Parse <think> tags
           let remaining = delta;
@@ -994,6 +1038,17 @@ function openPreviewExternal() {
 }
 
 // ── Skills ────────────────────────────────────────────────────────
+const _PERSONALITY_BADGES = {
+  general:  '🌐 General',
+  default:  '🤖 Assistant',
+  coder:    '💻 Coder',
+  creative: '✨ Creative',
+  analyst:  '📊 Analyst',
+};
+function _personalityBadge(p) {
+  return _PERSONALITY_BADGES[p] || `🏷 ${escHtml(p || 'general')}`;
+}
+
 async function loadSkills() {
   try {
     const skills = await API.get('/api/skills');
@@ -1014,6 +1069,7 @@ async function loadSkills() {
         <div class="skill-desc">${escHtml(s.description)}</div>
         <div class="skill-footer" data-skillid="${s.id}">
           <span class="skill-type">${s.action_type}</span>
+          <span class="skill-personality-badge" title="Available when using this personality">${_personalityBadge(s.personality)}</span>
           <button class="btn btn-ghost btn-sm btn-icon" title="Test skill">▶</button>
           <button class="btn btn-ghost btn-sm btn-icon" title="Edit">✏️</button>
           <button class="btn btn-danger btn-sm btn-icon" title="Delete">🗑</button>
@@ -1042,6 +1098,7 @@ function openSkillModal(skill) {
   document.getElementById('skill-webhook').value = skill?.webhook_url || '';
   document.getElementById('skill-params').value = skill?.parameters ? JSON.stringify(skill.parameters, null, 2) : '';
   document.getElementById('skill-enabled').checked = skill?.enabled !== false;
+  document.getElementById('skill-personality').value = skill?.personality || 'general';
   toggleSkillType();
   openModal('skill-modal');
 }
@@ -1069,6 +1126,7 @@ async function saveSkill() {
     code: document.getElementById('skill-code').value,
     webhook_url: document.getElementById('skill-webhook').value,
     enabled: document.getElementById('skill-enabled').checked,
+    personality: document.getElementById('skill-personality').value,
   };
   try {
     if (id) {
@@ -2251,6 +2309,7 @@ const SLASH_COMMANDS = [
   { cmd: '/remember',       desc: 'Save a fact to memory',                       usage: '/remember <text>' },
   { cmd: '/recall',         desc: 'Search memory',                               usage: '/recall <query>' },
   { cmd: '/help',           desc: 'Show all slash commands',                     usage: '/help' },
+  { cmd: '/bookcontext',    desc: 'Build Book Bible from book.json — full novel awareness in small context', usage: '/bookcontext [path/to/book.json]' },
 ];
 
 let _cmdSelectedIdx = -1;
@@ -2327,9 +2386,90 @@ async function handleSlashCommand(raw) {
     case '/remember':       return quickRemember(args);
     case '/recall':         return quickRecall(args);
     case '/help':           return showHelp();
+    case '/bookcontext':    return runBookContext(args);
     default:
       addSystemMessage(`Unknown command: ${cmd}. Type /help for the list.`);
   }
+}
+
+// ── /bookcontext ──────────────────────────────────────────────────
+async function runBookContext(args) {
+  if (!_canChat()) { toast('Load a model first (use Creative personality for best results)', 'error'); return; }
+
+  // Switch to Creative personality automatically
+  const sel = document.getElementById('personality-select');
+  if (sel && sel.value !== 'creative') {
+    sel.value = 'creative';
+    state.personalityId = 'creative';
+    addSystemMessage('Switched to Creative personality for book writing.');
+  }
+
+  const pathHint = args ? `Use book_json_path="${args}".` : 'Auto-detect book.json in workspace.';
+  addSystemMessage('📖 Building Book Bible — reading each chapter sequentially…');
+
+  const msg = (
+    `You are a book editor. Use the book_writer_skill to build a complete Book Bible.\n\n` +
+    `Steps:\n` +
+    `1. Call book_writer_skill with action="list_chapters" to see all chapters. ${pathHint}\n` +
+    `2. For each chapter (by index), call book_writer_skill with action="summarize_chapter" and chapter_index=N.\n` +
+    `   For each chapter you read, write a structured summary:\n` +
+    `   ## Chapter N: [Title]\n` +
+    `   **Characters present:** [name — role, arc note]\n` +
+    `   **Key events:** bullet list\n` +
+    `   **Plot threads opened/closed:** ...\n` +
+    `   **Tone/style:** ...\n` +
+    `   **Ending state:** ...\n\n` +
+    `3. After all chapters, append two master sections:\n` +
+    `   ## Master Character Sheet\n` +
+    `   (each named character, role, arc across all chapters)\n` +
+    `   ## Timeline\n` +
+    `   (chronological events with chapter references)\n` +
+    `   ## Open Threads\n` +
+    `   (unresolved plot points for next chapter)\n\n` +
+    `4. Call book_writer_skill with action="save_bible" and content="[the full markdown]".\n\n` +
+    `Be thorough. Each chapter summary should be ~150-200 words.`
+  );
+
+  try {
+    _setGenerating(true);
+    const { bubble } = createAssistantBubble();
+    const result = await API.post('/api/agent', {
+      message: msg,
+      personality_id: 'creative',
+      max_iterations: 25,
+      server_name: 'main',
+      conv_id: state.convId,
+    });
+    renderFinalBubble(bubble, result.content || 'Book Bible built.');
+    updateContextBar();
+    // Check if book-bible.md now exists in workspace
+    _checkBookMode();
+    toast('Book Bible complete — switch to Creative personality and ask AI to continue your story!', 'success', 5000);
+  } catch (e) {
+    toast('Book Bible failed: ' + e.message, 'error');
+  } finally {
+    _setGenerating(false);
+  }
+}
+
+// ── Book Mode badge ───────────────────────────────────────────────
+let _bookModeActive = false;
+
+async function _checkBookMode() {
+  try {
+    const files = await API.get('/api/workspace/files');
+    const hasBook = files.some(f => f.path === 'book.json' || f.path.endsWith('/book.json'));
+    const hasBible = files.some(f => f.path === 'book-bible.md' || f.path.endsWith('/book-bible.md'));
+    const badge = document.getElementById('book-mode-badge');
+    if (!badge) return;
+    _bookModeActive = hasBook;
+    badge.style.display = hasBook ? '' : 'none';
+    badge.title = hasBible
+      ? 'Book Bible ready — use Creative personality to write chapters'
+      : 'book.json detected — run /bookcontext to build the Book Bible';
+    badge.textContent = hasBible ? '📖 Book Mode ✓' : '📖 Book Mode';
+    badge.style.opacity = hasBible ? '1' : '0.6';
+  } catch (_) {}
 }
 
 // ── /validate_skill & /fix_skill ──────────────────────────────────
@@ -2812,6 +2952,14 @@ class FloatWin {
     if (on) this._onOpen();
   }
 
+  open() {
+    if (!this.visible) {
+      this.el.classList.add('visible');
+      this.btnEl?.classList.add('win-btn-on');
+      this._onOpen();
+    }
+  }
+
   get visible() { return this.el.classList.contains('visible'); }
 
   // ── Minimize ───────────────────────────────────────────────────
@@ -3037,8 +3185,14 @@ class TerminalWin extends FloatWin {
     const short = parts.slice(-2).join('/');
     this.appendLine(`<span class="term-prompt">${escHtml(short)}&gt;</span> <span class="term-cmd">${escHtml(cmd)}</span>`);
 
+    // Show a running indicator for commands that may take a while
+    const runningId = 'term-running-' + Date.now();
+    this.appendLine(`<span class="term-dim" id="${runningId}">running…</span>`);
+
     try {
-      const res = await API.post('/api/terminal/exec', { command: cmd });
+      const res = await API.post('/api/terminal/exec', { command: cmd, timeout: 300 });
+      // Remove the running indicator
+      document.getElementById(runningId)?.remove();
       if (res.output) {
         const cls = res.returncode !== 0 ? 'term-err' : 'term-out';
         res.output.split('\n').forEach(l => {
@@ -3047,6 +3201,7 @@ class TerminalWin extends FloatWin {
       }
       if (res.cwd) this._setCwd(res.cwd);
     } catch (e) {
+      document.getElementById(runningId)?.remove();
       this.appendLine(`<span class="term-err">Error: ${escHtml(e.message)}</span>`);
     } finally {
       this._busy = false;
@@ -3121,13 +3276,15 @@ async function init() {
   _splashLog('UI shell mounted', 'ok');
 
   await Promise.all([
-    _splashWrap(loadHardware(),       'Hardware info loaded'),
-    _splashWrap(loadModels(),         'Model directory scanned'),
-    _splashWrap(loadPersonalities(),  'Personalities registered'),
-    _splashWrap(loadSkills(),         'Skills indexed'),
-    _splashWrap(checkServerStatus(),  'Inference server checked'),
+    _splashWrap(loadHardware(),         'Hardware info loaded'),
+    _splashWrap(loadModels(),           'Model directory scanned'),
+    _splashWrap(loadPersonalities(),    'Personalities registered'),
+    _splashWrap(loadSkills(),           'Skills indexed'),
+    _splashWrap(checkServerStatus(),    'Inference server checked'),
     _splashWrap(_loadProviderBadge(),   'Provider config loaded'),
     _splashWrap(_loadWorkspacePath(),   'Workspace path resolved'),
+    _splashWrap(_checkBookMode(),       'Book mode checked'),
+    _splashWrap(_applyStartupConfig(), 'Launch mode applied'),
   ]);
 
   startPolling();

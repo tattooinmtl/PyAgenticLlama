@@ -607,6 +607,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .skill-desc      { font-size: 11px; color: var(--text2); line-height: 1.4; }
 .skill-footer    { display: flex; gap: 5px; align-items: center; margin-top: 3px; }
 .skill-type      { font-size: 10px; color: var(--text3); background: var(--bg); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); }
+.skill-personality-badge { font-size: 10px; color: var(--accent); background: var(--bg); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--accent); opacity: 0.8; margin-right: auto; }
 
 /* ── Memory Panel ─────────────────────────────────────────────── */
 .memory-card {
@@ -839,6 +840,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .float-body .term-out   { color: #c9d1d9; }
 .float-body .term-err   { color: var(--red); }
 .float-body .term-prompt { color: var(--green); font-weight: 600; }
+.float-body .term-dim    { color: var(--text3); font-style: italic; }
 
 /* Terminal input row */
 .float-input-row {

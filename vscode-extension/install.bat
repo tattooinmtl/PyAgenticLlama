@@ -5,25 +5,33 @@ echo  PyAgenticLlama - VS Code Extension Installer
 echo  ==============================================
 echo.
 
-set DEST=%USERPROFILE%\.vscode\extensions\pyagentic-llama-1.0.0
+set VSIX=%~dp0pyagentic-llama-1.0.0.vsix
 
-echo  Installing to: %DEST%
-echo.
-
-if exist "%DEST%" (
-    echo  Removing old version...
-    rd /s /q "%DEST%"
+if not exist "%VSIX%" (
+    echo  ERROR: pyagentic-llama-1.0.0.vsix not found next to this script.
+    goto :error
 )
 
-mkdir "%DEST%"
-copy "%~dp0package.json" "%DEST%\" >nul
-copy "%~dp0extension.js"  "%DEST%\" >nul
+echo  Installing into VS Code...
+call code --install-extension "%VSIX%" --force
+if errorlevel 1 ( echo  WARNING: VS Code CLI failed. )
 
+if exist "%USERPROFILE%\.cursor" (
+    echo.
+    echo  Cursor detected - installing there too...
+    call cursor --install-extension "%VSIX%" --force
+)
+
+echo.
 echo  Done!
 echo.
-echo  Next steps:
-echo   1. Restart VS Code  (or reload window: Ctrl+Shift+P -> Reload Window)
-echo   2. Look for the PyAgenticLlama status bar item at the bottom right
-echo   3. Start PyAgenticLlama app, load a model, then send code blocks
+echo  Reload VS Code: Ctrl+Shift+P -^> Developer: Reload Window
+echo  Then look for the PyAgenticLlama icon in the left activity bar.
 echo.
 pause
+exit /b 0
+
+:error
+echo.
+pause
+exit /b 1

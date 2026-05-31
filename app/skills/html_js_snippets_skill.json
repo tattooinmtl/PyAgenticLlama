@@ -34,5 +34,6 @@
   "code": "",
   "py_file": "html_js_snippets_skill.py",
   "webhook_url": "",
-  "enabled": true
+  "enabled": true,
+  "personality": "coder"
 }

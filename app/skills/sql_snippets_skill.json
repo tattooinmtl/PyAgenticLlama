@@ -30,5 +30,6 @@
   "code": "",
   "py_file": "sql_snippets_skill.py",
   "webhook_url": "",
-  "enabled": true
+  "enabled": true,
+  "personality": "analyst"
 }

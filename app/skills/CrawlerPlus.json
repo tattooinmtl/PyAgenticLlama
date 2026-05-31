@@ -30,5 +30,6 @@
   "code": "",
   "py_file": "CrawlerPlus.py",
   "webhook_url": "",
-  "enabled": true
+  "enabled": true,
+  "personality": "general"
 }
