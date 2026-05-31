@@ -110,6 +110,26 @@ def model_info(path: str) -> dict:
     head_dim = (emb // heads) if heads else 128
     kv_gb = (est_ctx * layers * 2 * (kv_heads or heads or 1) * head_dim * 2) / 1024**3 if layers else 0
 
+    # Vision / multimodal detection
+    _VISION_ARCH = {'mllama', 'llava', 'clip', 'internvl', 'cogvlm', 'idefics', 'flamingo',
+                    'qwen2_vl', 'qwenvl', 'internvl2', 'minicpmv'}
+    _VISION_NAMES = ('llava', 'vision', '-vl', 'vl-', 'moondream', 'bakllava',
+                     'minicpm-v', 'cogvlm', 'internvl', 'qwen-vl', 'pixtral', 'phi-3-vision')
+    _SELF_CONTAINED_VISION = {'mllama', 'qwen2_vl', 'qwenvl'}  # vision encoder bundled in one file
+
+    is_vision = (
+        arch.lower() in _VISION_ARCH
+        or any(k.startswith(('clip.', 'vision.', 'mllama.')) for k in m)
+        or any(kw in stem.lower() for kw in _VISION_NAMES)
+    )
+    mmproj_needed = is_vision and arch.lower() not in _SELF_CONTAINED_VISION
+    mmproj_path = None
+    if mmproj_needed:
+        for f in Path(path).parent.glob('*.gguf'):
+            if 'mmproj' in f.name.lower():
+                mmproj_path = str(f)
+                break
+
     return {
         'path': path,
         'name': m.get('general.name', stem),
@@ -129,4 +149,7 @@ def model_info(path: str) -> dict:
         'quantization': str(quant_ver or file_type or 'unknown'),
         'has_bos': bool(m.get('tokenizer.ggml.add_bos_token', True)),
         'has_eos': bool(m.get('tokenizer.ggml.add_eos_token', True)),
+        'is_vision': is_vision,
+        'mmproj_needed': mmproj_needed,
+        'mmproj_path': mmproj_path,
     }

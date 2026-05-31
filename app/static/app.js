@@ -4,6 +4,8 @@ const state = {
   selectedModel: null,
   serverRunning: false,
   externalProvider: false,   // true when an external API provider is active
+  modelInfo: null,           // full info object from /api/models/info for loaded model
+  provider: null,            // current provider config
   csOpen: false,             // CodingSpace panel open
   mode: 'chat',              // 'chat' | 'agent'
   convId: 'default',
@@ -196,6 +198,7 @@ async function onModelSelect() {
   state.selectedModel = path;
   try {
     const info = await API.get('/api/models/info?path=' + encodeURIComponent(path));
+    state.modelInfo = info;
     showModelQuickInfo(info);
     // Default to 4096 — do NOT auto-fill the model's max context (e.g. 131072 for Llama 3.1).
     // llama-server pre-allocates the FULL KV cache for whatever -c you pass.
@@ -221,6 +224,9 @@ function showModelQuickInfo(info) {
   if (info.fits !== undefined) {
     fitBadge.innerHTML = `<span class="badge ${info.fits ? 'badge-green' : 'badge-red'}">${info.fit_message}</span>`;
     fitBadge.innerHTML += `&nbsp;<span class="badge badge-blue">${info.chat_template_format || 'unknown'} template</span>`;
+    if (info.is_vision) {
+      fitBadge.innerHTML += `&nbsp;<span class="badge badge-green">👁 Vision</span>`;
+    }
   }
   document.getElementById('model-quick-info').style.display = 'block';
 }
@@ -242,6 +248,7 @@ async function loadModel() {
       context_length: ctx,
       gpu_layers: gpu,
       server_name: 'main',
+      mmproj_path: state.modelInfo?.mmproj_path || null,
     });
     state.serverRunning = true;
     updateServerStatus(true);
@@ -349,17 +356,115 @@ function toggleMemoryMode(btn) {
   btn.classList.toggle('active');
 }
 
+// ── Attachments ──────────────────────────────────────────────────
+let _attachments = []; // [{name, type, content?, dataUrl?, mime?}]
+
+function _modelAcceptsImages() {
+  if (state.modelInfo?.is_vision) return true;
+  if (state.externalProvider) return true;  // let provider reject if unsupported
+  return false;
+}
+
+function openAttachPicker() {
+  const input = document.getElementById('attach-input');
+  const imgTypes = _modelAcceptsImages() ? '.jpg,.jpeg,.png,.gif,.webp,.bmp,' : '';
+  input.accept = imgTypes + '.txt,.md,.py,.js,.ts,.jsx,.tsx,.json,.csv,.html,.css,.xml,.yaml,.yml,.sh,.bat,.c,.cpp,.h,.java,.rs,.go,.rb,.php,.pdf';
+  input.click();
+}
+
+async function handleAttachFiles(files) {
+  for (const file of files) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    const isImage = ['jpg','jpeg','png','gif','webp','bmp'].includes(ext);
+    if (isImage) {
+      try {
+        const dataUrl = await _readAsDataUrl(file);
+        _attachments.push({ name: file.name, type: 'image', dataUrl, mime: file.type || 'image/jpeg' });
+      } catch (e) { toast('Could not read image: ' + file.name, 'error'); }
+    } else if (ext === 'pdf') {
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch('/api/upload', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (d.content !== undefined) {
+          _attachments.push({ name: file.name, type: 'text', content: d.content });
+        } else {
+          toast('Could not extract PDF text: ' + (d.detail || 'unknown error'), 'error');
+        }
+      } catch (e) { toast('PDF upload failed: ' + e.message, 'error'); }
+    } else {
+      try {
+        const text = await _readAsText(file);
+        _attachments.push({ name: file.name, type: 'text', content: text });
+      } catch (e) { toast('Could not read file: ' + file.name, 'error'); }
+    }
+  }
+  document.getElementById('attach-input').value = '';
+  renderAttachBar();
+}
+
+function removeAttachment(i) {
+  _attachments.splice(i, 1);
+  renderAttachBar();
+}
+
+function renderAttachBar() {
+  const bar = document.getElementById('attach-bar');
+  const btn = document.getElementById('attach-btn');
+  if (_attachments.length === 0) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    btn.classList.remove('has-files');
+    return;
+  }
+  btn.classList.add('has-files');
+  bar.style.display = 'flex';
+  bar.innerHTML = _attachments.map((att, i) => {
+    if (att.type === 'image') {
+      return `<div class="attach-chip attach-chip-img">
+        <img src="${att.dataUrl}" class="attach-thumb" alt="${escHtml(att.name)}">
+        <span class="attach-chip-name">${escHtml(att.name)}</span>
+        <button class="attach-chip-rm" onclick="removeAttachment(${i})" title="Remove">×</button>
+      </div>`;
+    }
+    return `<div class="attach-chip">
+      <span class="attach-chip-icon">📄</span>
+      <span class="attach-chip-name">${escHtml(att.name)}</span>
+      <button class="attach-chip-rm" onclick="removeAttachment(${i})" title="Remove">×</button>
+    </div>`;
+  }).join('');
+}
+
+function _readAsDataUrl(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = e => res(e.target.result);
+    fr.onerror = () => rej(new Error('FileReader error'));
+    fr.readAsDataURL(file);
+  });
+}
+
+function _readAsText(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = e => res(e.target.result);
+    fr.onerror = () => rej(new Error('FileReader error'));
+    fr.readAsText(file, 'utf-8');
+  });
+}
+
 async function sendMessage() {
   if (state.streaming) return;
   const box = document.getElementById('input-box');
   const msg = box.value.trim();
-  if (!msg) return;
+  if (!msg && _attachments.length === 0) return;
 
   _hideCmdDropdown();
   box.value = '';
   box.style.height = 'auto';
 
-  // Intercept slash commands before sending to the model
+  // Intercept slash commands (attachments are ignored for slash commands)
   if (msg.startsWith('/')) {
     removeEmptyState();
     await handleSlashCommand(msg);
@@ -369,16 +474,22 @@ async function sendMessage() {
   if (!_canChat()) { toast('Load a model or set an AI provider (/provider)', 'error'); return; }
 
   removeEmptyState();
-  appendMessage('user', msg);
+
+  // Snapshot and clear attachments before sending
+  const attachSnapshot = [..._attachments];
+  _attachments = [];
+  renderAttachBar();
+
+  appendUserMessage(msg, attachSnapshot);
 
   if (state.mode === 'agent') {
     await runAgent(msg);
   } else {
-    await streamChat(msg);
+    await streamChat(msg, null, attachSnapshot);
   }
 }
 
-async function streamChat(msg, systemOverride = null) {
+async function streamChat(msg, systemOverride = null, attachments = []) {
   state.streaming = true;
   _abortCtrl = new AbortController();
   _setGenerating(true);
@@ -408,6 +519,13 @@ async function streamChat(msg, systemOverride = null) {
         conv_id: state.convId,
         server_name: 'main',
         inject_memory: injectMem,
+        attachments: attachments.map(a => ({
+          filename: a.name,
+          type: a.type,
+          content: a.content || '',
+          data_url: a.dataUrl || '',
+          mime: a.mime || '',
+        })),
       }),
     });
 
@@ -582,6 +700,31 @@ function appendMessage(role, content) {
   `;
   msgs.appendChild(wrap);
   scrollToBottom();
+  return wrap;
+}
+
+function appendUserMessage(msg, attachments = []) {
+  const wrap = appendMessage('user', msg);
+  if (attachments.length === 0) return wrap;
+  const bubble = wrap.querySelector('.msg-bubble');
+  const bar = document.createElement('div');
+  bar.className = 'msg-attach-bar';
+  for (const att of attachments) {
+    if (att.type === 'image' && att.dataUrl) {
+      const img = document.createElement('img');
+      img.className = 'msg-attach-img';
+      img.src = att.dataUrl;
+      img.alt = att.name;
+      img.onclick = () => window.open(att.dataUrl, '_blank');
+      bar.appendChild(img);
+    } else {
+      const chip = document.createElement('span');
+      chip.className = 'msg-attach-file';
+      chip.textContent = `📄 ${att.name}`;
+      bar.appendChild(chip);
+    }
+  }
+  bubble.insertBefore(bar, bubble.firstChild);
   return wrap;
 }
 
@@ -1969,6 +2112,7 @@ async function confirmProviderFile() {
 }
 
 function _updateProviderBadge(cfg) {
+  state.provider = cfg || null;
   state.externalProvider = !!(cfg && cfg.type === 'external');
   const badge = document.getElementById('provider-badge');
   if (!badge) return;

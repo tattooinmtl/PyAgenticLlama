@@ -262,6 +262,7 @@ class StartRequest(BaseModel):
     context_length: int = 4096
     gpu_layers: int = 20
     server_name: str = 'main'
+    mmproj_path: str | None = None
 
 @app.post('/api/server/start')
 async def start_server(req: StartRequest):
@@ -269,7 +270,7 @@ async def start_server(req: StartRequest):
         raise HTTPException(404, 'Model file not found')
     srv = get_server(req.server_name)
     try:
-        await srv.start(req.model_path, req.context_length, req.gpu_layers)
+        await srv.start(req.model_path, req.context_length, req.gpu_layers, req.mmproj_path)
         ctx = get_context()
         ctx.max_tokens = req.context_length
         ctx.clear()
@@ -402,7 +403,57 @@ async def parse_provider_file(file: UploadFile = File(...)):
         'model': model,
     }
 
+# ── File upload / attachment extraction ──────────────────────────
+
+@app.post('/api/upload')
+async def upload_attachment(file: UploadFile = File(...)):
+    """Extract content from an uploaded file. PDFs → text. Images → base64 data-url."""
+    import base64
+    data = await file.read()
+    filename = file.filename or 'file'
+    ext = Path(filename).suffix.lower()
+
+    if ext == '.pdf':
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(stream=data, filetype='pdf')
+            text = '\n\n'.join(page.get_text() for page in doc)
+            doc.close()
+            return {'type': 'text', 'filename': filename, 'content': text}
+        except ImportError:
+            pass
+        try:
+            from pdfminer.high_level import extract_text
+            import io
+            text = extract_text(io.BytesIO(data))
+            return {'type': 'text', 'filename': filename, 'content': text}
+        except ImportError:
+            raise HTTPException(400, 'PDF parsing unavailable — install PyMuPDF: pip install pymupdf')
+
+    if ext in ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'):
+        mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                    '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+                    '.svg': 'image/svg+xml'}
+        mime = mime_map.get(ext, file.content_type or 'image/jpeg')
+        b64 = base64.b64encode(data).decode()
+        return {'type': 'image', 'filename': filename,
+                'data_url': f'data:{mime};base64,{b64}', 'mime': mime}
+
+    # Fallback: decode as text
+    try:
+        return {'type': 'text', 'filename': filename,
+                'content': data.decode('utf-8', errors='replace')}
+    except Exception:
+        raise HTTPException(400, f'Cannot read {filename} as text')
+
 # ── Chat ──────────────────────────────────────────────────────────
+
+class AttachmentItem(BaseModel):
+    filename: str = ''
+    type: str = 'text'        # 'text' | 'image'
+    content: str = ''         # text file content
+    data_url: str = ''        # image: 'data:image/png;base64,...'
+    mime: str = ''
 
 class ChatRequest(BaseModel):
     message: str
@@ -412,6 +463,7 @@ class ChatRequest(BaseModel):
     conv_id: str = 'default'
     server_name: str = 'main'
     inject_memory: bool = False
+    attachments: list[AttachmentItem] = []
 
 def _resolve_persona(pid: str, override_system: str | None) -> tuple[str | None, float, float]:
     p = get_personality(pid)
@@ -457,7 +509,21 @@ async def chat(req: ChatRequest):
             mem_text = '\n'.join(f"- {m['content']}" for m in mems)
             system = (system or '') + f'\n\n[Relevant memories]:\n{mem_text}'
 
-    ctx.add('user', req.message)
+    # Build message content — plain text or multimodal list for vision models
+    text_parts = [req.message] if req.message else []
+    image_parts = []
+    for att in req.attachments:
+        if att.type == 'text' and att.content:
+            text_parts.append(f'\n\n---\n**File: {att.filename}**\n```\n{att.content[:50000]}\n```')
+        elif att.type == 'image' and att.data_url:
+            image_parts.append({'type': 'image_url', 'image_url': {'url': att.data_url}})
+    combined_text = ''.join(text_parts)
+    user_content: str | list = (
+        [{'type': 'text', 'text': combined_text}] + image_parts
+        if image_parts else combined_text
+    )
+
+    ctx.add('user', user_content)
     messages = ctx.get_messages(system)
     tools = _skills_as_tools()
 
@@ -535,9 +601,17 @@ async def _compact(srv, ctx):
     model_id = provider.get('model', 'local') if provider.get('type') == 'external' else 'local'
     n = max(2, len(ctx.messages) // 2)
     to_sum = ctx.messages[:n]
+    def _msg_text(m: dict) -> str:
+        c = m.get('content', '')
+        if isinstance(c, list):
+            return ' '.join(p.get('text', '') for p in c if isinstance(p, dict) and p.get('type') == 'text')
+        return str(c)
+
     prompt = [
         {'role': 'system', 'content': 'Summarize this conversation concisely. Keep all key facts, decisions, and context. Be brief.'},
-        {'role': 'user', 'content': '\n'.join(f"{m['role'].upper()}: {m['content']}" for m in to_sum if isinstance(m, dict) and 'content' in m)}
+        {'role': 'user', 'content': '\n'.join(
+            f"{m['role'].upper()}: {_msg_text(m)}" for m in to_sum if isinstance(m, dict) and 'content' in m
+        )}
     ]
     try:
         async with httpx.AsyncClient(timeout=120) as client:

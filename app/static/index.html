@@ -233,7 +233,16 @@
           <button class="mode-btn" id="mode-agent" onclick="setMode('agent')">Agent</button>
           <button class="mode-btn" id="mode-memory" onclick="toggleMemoryMode(this)">🧠 Memory</button>
         </div>
+
+        <!-- Attachment preview bar — hidden until files are attached -->
+        <div id="attach-bar" style="display:none"></div>
+
+        <!-- Hidden file input — accept attribute set dynamically by JS -->
+        <input type="file" id="attach-input" style="display:none" multiple
+               onchange="handleAttachFiles(this.files)">
+
         <div class="input-row">
+          <button class="btn attach-btn" id="attach-btn" onclick="openAttachPicker()" title="Attach file">📎</button>
           <textarea id="input-box" placeholder="Message... (Shift+Enter for new line, Enter to send)" rows="1"></textarea>
           <button class="btn btn-primary" id="send-btn" onclick="sendMessage()">Send</button>
           <button class="btn btn-stop" id="stop-gen-btn" onclick="stopGeneration()" style="display:none" title="Stop generation">■ Stop</button>

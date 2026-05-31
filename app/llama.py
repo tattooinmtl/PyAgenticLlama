@@ -11,6 +11,7 @@ class LlamaServer:
         self.model_path: str | None = None
         self.context_length: int = 4096
         self.gpu_layers: int = 0
+        self.mmproj_path: str | None = None
         self._proc: asyncio.subprocess.Process | None = None
         self._log_fh = None
         self._log_path = BASE_DIR / f'llama-{name}.log'
@@ -19,12 +20,14 @@ class LlamaServer:
     def running(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
-    async def start(self, model_path: str, context_length: int = 4096, gpu_layers: int = 0):
+    async def start(self, model_path: str, context_length: int = 4096, gpu_layers: int = 0,
+                    mmproj_path: str | None = None):
         if self.running:
             await self.stop()
         self.model_path = model_path
         self.context_length = context_length
         self.gpu_layers = gpu_layers
+        self.mmproj_path = mmproj_path
         cmd = [
             str(SERVER_EXE),
             '-m', model_path,
@@ -34,6 +37,8 @@ class LlamaServer:
             '--host', '127.0.0.1',
             '--parallel', '1',
         ]
+        if mmproj_path:
+            cmd += ['--mmproj', mmproj_path]
         self._log_fh = open(self._log_path, 'w', encoding='utf-8', errors='replace')
         self._proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=self._log_fh, stderr=self._log_fh
@@ -86,6 +91,7 @@ class LlamaServer:
             'model': self.model_path,
             'context_length': self.context_length,
             'gpu_layers': self.gpu_layers,
+            'mmproj': self.mmproj_path,
             'port': self.port,
         }
 
