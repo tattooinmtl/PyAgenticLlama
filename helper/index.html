@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skills Guide — PyAgenticLlama</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="progress-bar"></div>
+
+<!-- ── Nav ─────────────────────────────────────────────────────── -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-brand" href="#">🦙 PyAgentic<span>Llama</span></a>
+    <div class="nav-links">
+      <a href="#what-is-a-skill">What are Skills</a>
+      <a href="#create">Create</a>
+      <a href="#test">Test</a>
+      <a href="#builder">Builder</a>
+      <a href="#examples">Examples</a>
+    </div>
+  </div>
+</nav>
+
+<div class="page">
+
+  <!-- ── Hero ─────────────────────────────────────────────────── -->
+  <div class="hero">
+    <div class="hero-badge">⚡ Skills Documentation</div>
+    <h1>Give your AI<br>superpowers</h1>
+    <p>Skills are Python functions that the AI can call as tools — letting it search the web, run code, read files, call APIs, and anything else you can write in Python.</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="#create">Create your first skill</a>
+      <a class="btn btn-ghost" href="#builder">Open the Builder ↓</a>
+    </div>
+  </div>
+
+  <!-- ── What is a Skill ───────────────────────────────────────── -->
+  <section id="what-is-a-skill">
+    <div class="section-label">Overview</div>
+    <h2>What is a Skill?</h2>
+    <p>A skill is two things stored together: a <strong>JSON definition</strong> that describes what the skill does and what parameters it accepts, and a <strong>Python function</strong> called <code>execute(**kwargs)</code> that runs the actual logic.</p>
+    <p>When you send a message, the AI reads all enabled skill definitions and decides whether to call one. If it does, PyAgenticLlama runs your Python code and feeds the result back into the conversation — all automatically.</p>
+
+    <div class="card card-accent" style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:20px">
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#a78bfa;margin-bottom:10px">JSON Definition</div>
+        <p style="font-size:13px">Tells the AI <em>what</em> the skill does, what parameters to pass, and whether it's enabled.</p>
+        <ul style="font-size:13px;color:var(--text2);padding-left:18px;line-height:1.9">
+          <li>Name &amp; description</li>
+          <li>Parameter schema (names, types, required)</li>
+          <li>Enabled / disabled flag</li>
+        </ul>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#a78bfa;margin-bottom:10px">Python Code</div>
+        <p style="font-size:13px">Does the actual work when the AI calls the skill. Must define <code>execute(**kwargs)</code> and return a string.</p>
+        <ul style="font-size:13px;color:var(--text2);padding-left:18px;line-height:1.9">
+          <li>Any standard library import</li>
+          <li><code>httpx</code>, <code>json</code>, <code>os</code> pre-injected</li>
+          <li>Must return a <code>str</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout info" style="margin-top:20px">
+      <div class="callout-icon">💡</div>
+      <div class="callout-body">
+        <strong>Auto-discovery</strong>
+        If you drop a <code>.py</code> file with an <code>execute(**kwargs)</code> function into the <code>app/skills/</code> folder, PyAgenticLlama registers it automatically on the next startup — no JSON file needed.
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ── Create ────────────────────────────────────────────────── -->
+  <section id="create">
+    <div class="section-label">Step-by-step</div>
+    <h2>Creating a Skill</h2>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Open the Skills panel</h3>
+          <p>In the right-hand panel, click the <strong>Skills</strong> tab. Then click <strong>+ New Skill</strong> at the top.</p>
+          <div class="callout tip">
+            <div class="callout-icon">✅</div>
+            <div class="callout-body">The skill modal opens with empty fields and a code editor ready to type in.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Fill in the definition</h3>
+          <p>Give your skill a <strong>name</strong>, a clear <strong>description</strong> (the AI reads this to decide when to use the skill), and add any <strong>parameters</strong> it needs.</p>
+
+          <table class="param-table" style="margin-top:14px">
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>What to write</th>
+                <th>Example</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="param-name">Name</td>
+                <td class="param-desc">Short, human-readable label</td>
+                <td class="param-desc"><code>Web Search</code></td>
+              </tr>
+              <tr>
+                <td class="param-name">Description</td>
+                <td class="param-desc">Explain when and how the AI should call this skill</td>
+                <td class="param-desc"><code>Search the web for current information on a topic</code></td>
+              </tr>
+              <tr>
+                <td class="param-name">Parameters</td>
+                <td class="param-desc">Each input the AI will fill in (name, type, required)</td>
+                <td class="param-desc"><code>query</code> · string · required</td>
+              </tr>
+              <tr>
+                <td class="param-name">Action type</td>
+                <td class="param-desc">Almost always <code>Python</code></td>
+                <td class="param-desc"><code>python</code></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="callout warn" style="margin-top:10px">
+            <div class="callout-icon">⚠️</div>
+            <div class="callout-body">
+              <strong>Write a good description</strong>
+              The description is what the AI sees — not you. Be specific: <em>"Search the web using DuckDuckGo and return the top 5 results"</em> works much better than <em>"search"</em>.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Write the Python code</h3>
+          <p>In the code editor, write your <code>execute(**kwargs)</code> function. Parameters defined in the schema are available as keyword arguments.</p>
+
+          <div class="code-wrap">
+            <div class="code-header">
+              <span class="code-lang">Python — skill template</span>
+              <button class="btn-copy" onclick="copyCode(this)">Copy</button>
+            </div>
+<pre><code><span class="cmt"># Any imports you need</span>
+<span class="kw">import</span> httpx, json
+
+<span class="kw">def</span> <span class="fn">execute</span>(**kwargs):
+    <span class="cmt"># Read parameters — match names to your schema</span>
+    query = kwargs.get(<span class="str">'query'</span>, <span class="str">''</span>)
+
+    <span class="cmt"># Do the work</span>
+    <span class="kw">if not</span> query:
+        <span class="kw">return</span> <span class="str">'No query provided.'</span>
+
+    <span class="cmt"># Always return a string — the AI reads this as the tool result</span>
+    <span class="kw">return</span> <span class="fn">f</span><span class="str">'Result for: {query}'</span></code></pre>
+          </div>
+
+          <h3>What's pre-injected</h3>
+          <p>You don't need to import these — they're already available inside <code>execute()</code>:</p>
+          <table class="param-table">
+            <thead><tr><th>Name</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td class="param-name">httpx</td><td class="param-desc">HTTP client — <code>httpx.get(url)</code>, <code>httpx.post(url, json={...})</code></td></tr>
+              <tr><td class="param-name">json</td><td class="param-desc">Standard JSON encoder/decoder</td></tr>
+              <tr><td class="param-name">os</td><td class="param-desc">OS utilities — environment variables, paths</td></tr>
+              <tr><td class="param-name">subprocess</td><td class="param-desc">Run shell commands</td></tr>
+              <tr><td class="param-name">Path</td><td class="param-desc"><code>pathlib.Path</code> — filesystem operations</td></tr>
+              <tr><td class="param-name">vault_get</td><td class="param-desc"><code>vault_get(key)</code> — read a secret from the Vault</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Save the skill</h3>
+          <p>Click <strong>Save</strong>. The skill appears in the Skills list immediately. Toggle the switch to enable or disable it without deleting it.</p>
+          <div class="callout tip">
+            <div class="callout-icon">✅</div>
+            <div class="callout-body">Enabled skills are automatically sent to the model as OpenAI-format tool definitions on every chat request.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ── Test ──────────────────────────────────────────────────── -->
+  <section id="test">
+    <div class="section-label">Testing</div>
+    <h2>Testing a Skill</h2>
+    <p>You don't need to prompt the AI to test a skill — you can run it directly from the Skills panel.</p>
+
+    <div class="steps">
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Open the Test modal</h3>
+          <p>In the Skills panel, click the <strong>⚙ Test</strong> button on any skill card. The modal opens with auto-filled input fields for every parameter defined in the schema.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Fill in test values</h3>
+          <p>Each parameter gets its own input box. Type a test value and click <strong>Run Skill</strong>.</p>
+          <div class="callout info">
+            <div class="callout-icon">💡</div>
+            <div class="callout-body">
+              <strong>Type hints shown</strong>
+              The modal shows the expected type (<code>string</code>, <code>integer</code>, <code>boolean</code>) next to each field so you know what to enter.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Read the result</h3>
+          <p>The skill runs on the server and the output appears in the modal. If there's an error, the full Python traceback is shown — fix the code and run again.</p>
+          <div class="callout warn">
+            <div class="callout-icon">⚠️</div>
+            <div class="callout-body">
+              <strong>Skill code runs on the server</strong>
+              Network requests, file reads, and subprocess calls all happen on the machine running PyAgenticLlama, not in your browser.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <h3 style="margin-top:8px">Common errors and fixes</h3>
+    <table class="param-table" style="margin-top:10px">
+      <thead><tr><th>Error</th><th>Likely cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="param-name">No execute() function</td>
+          <td class="param-desc">Function name typo</td>
+          <td class="param-desc">Rename to exactly <code>def execute(**kwargs):</code></td>
+        </tr>
+        <tr>
+          <td class="param-name">KeyError / None</td>
+          <td class="param-desc">Parameter name mismatch</td>
+          <td class="param-desc">Check that <code>kwargs.get('name')</code> matches the schema field name exactly</td>
+        </tr>
+        <tr>
+          <td class="param-name">Module not found</td>
+          <td class="param-desc">Third-party package not installed</td>
+          <td class="param-desc">Run <code>pip install package-name</code> in the terminal tab, then retry</td>
+        </tr>
+        <tr>
+          <td class="param-name">Returns None / empty</td>
+          <td class="param-desc">Missing return statement or returns non-string</td>
+          <td class="param-desc">Always end with <code>return str(result)</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <hr>
+
+  <!-- ── Interactive Builder ───────────────────────────────────── -->
+  <section id="builder">
+    <div class="section-label">Interactive</div>
+    <h2>Skill Builder</h2>
+    <p>Fill in the form below — the JSON definition and Python template are generated live. Copy them straight into the app.</p>
+
+    <div class="builder">
+      <div class="builder-header">
+        <h3>⚡ New Skill</h3>
+        <button class="btn btn-sm btn-ghost" onclick="resetBuilder()">Reset</button>
+      </div>
+      <div class="builder-body">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Skill Name</label>
+            <input type="text" id="b-name" placeholder="e.g. Web Search" oninput="buildOutput()">
+          </div>
+          <div class="form-group">
+            <label>Action Type</label>
+            <select id="b-action" onchange="buildOutput()">
+              <option value="python">Python</option>
+              <option value="webhook">Webhook</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom:14px">
+          <label>Description <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(the AI reads this to decide when to call the skill)</span></label>
+          <textarea id="b-desc" placeholder="e.g. Search the web for up-to-date information about a topic and return the top results." oninput="buildOutput()" rows="3"></textarea>
+        </div>
+
+        <div id="webhook-row" class="form-group" style="margin-bottom:14px; display:none">
+          <label>Webhook URL</label>
+          <input type="text" id="b-webhook" placeholder="https://example.com/hook" oninput="buildOutput()">
+        </div>
+
+        <!-- Parameters -->
+        <label style="display:block;margin-bottom:8px">Parameters</label>
+        <div class="param-row-header">
+          <span>Name</span><span>Type</span><span>Description</span><span></span>
+        </div>
+        <div class="param-rows" id="param-rows"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addParam()" style="margin-bottom:18px">+ Add Parameter</button>
+
+        <!-- Output -->
+        <div class="out-tabs">
+          <div class="out-tab active" onclick="switchTab(this,'tab-json')">JSON Definition</div>
+          <div class="out-tab" onclick="switchTab(this,'tab-py')">Python Template</div>
+        </div>
+
+        <div class="out-panel active" id="tab-json">
+          <div class="code-wrap">
+            <div class="code-header">
+              <span class="code-lang">JSON</span>
+              <button class="btn-copy" onclick="copyCode(this)">Copy</button>
+            </div>
+            <pre id="out-json"><code></code></pre>
+          </div>
+        </div>
+
+        <div class="out-panel" id="tab-py">
+          <div class="code-wrap">
+            <div class="code-header">
+              <span class="code-lang">Python</span>
+              <button class="btn-copy" onclick="copyCode(this)">Copy</button>
+            </div>
+            <pre id="out-py"><code></code></pre>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ── Examples ─────────────────────────────────────────────── -->
+  <section id="examples">
+    <div class="section-label">Examples</div>
+    <h2>Ready-to-use Examples</h2>
+    <p>Click any card to see the full code. Copy it into the app's skill editor.</p>
+
+    <div class="examples-grid" id="examples-grid">
+      <div class="example-card" onclick="showExample('calculator')">
+        <div class="example-card-icon">🧮</div>
+        <div class="example-card-name">Calculator</div>
+        <div class="example-card-desc">Evaluate a math expression safely</div>
+      </div>
+      <div class="example-card" onclick="showExample('fetch-url')">
+        <div class="example-card-icon">🌐</div>
+        <div class="example-card-name">Fetch URL</div>
+        <div class="example-card-desc">Fetch a webpage and return its text content</div>
+      </div>
+      <div class="example-card" onclick="showExample('read-file')">
+        <div class="example-card-icon">📄</div>
+        <div class="example-card-name">Read File</div>
+        <div class="example-card-desc">Read a text file from disk and return its contents</div>
+      </div>
+      <div class="example-card" onclick="showExample('run-python')">
+        <div class="example-card-icon">🐍</div>
+        <div class="example-card-name">Run Python</div>
+        <div class="example-card-desc">Execute a Python snippet and capture its output</div>
+      </div>
+    </div>
+
+    <div class="example-detail" id="example-detail"></div>
+  </section>
+
+</div>
+
+<!-- ── Footer ────────────────────────────────────────────────────── -->
+<footer>
+  <p>PyAgenticLlama · Skills Guide · <a href="#">Back to top ↑</a></p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
