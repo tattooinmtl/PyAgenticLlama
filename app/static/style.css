@@ -539,7 +539,8 @@ select:focus, input:focus { border-color: var(--accent); }
   display: flex; flex-direction: column; overflow: hidden;
   transition: width .25s ease;
 }
-.right-panel.rp-collapsed { width: 0 !important; overflow: hidden; border: none; }
+.right-panel.rp-collapsed { display: none; }
+.workspace.rp-collapsed   { grid-template-columns: 260px 1fr; }
 #rp-toggle-btn {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%);
   z-index: 50; width: 16px; height: 44px;

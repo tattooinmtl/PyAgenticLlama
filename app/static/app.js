@@ -2928,9 +2928,11 @@ async function terminalRun() {
 // ── Right panel collapse ──────────────────────────────────────────
 
 function toggleRightPanel() {
-  const rp  = document.getElementById('right-panel');
-  const btn = document.getElementById('rp-toggle-btn');
+  const rp        = document.getElementById('right-panel');
+  const workspace = rp?.closest('.workspace');
+  const btn       = document.getElementById('rp-toggle-btn');
   const collapsed = rp.classList.toggle('rp-collapsed');
+  workspace?.classList.toggle('rp-collapsed', collapsed);
   if (btn) btn.textContent = collapsed ? '›' : '‹';
 }
 
