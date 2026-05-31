@@ -1,8 +1,8 @@
 @echo off
-title LocalAI
+title PyAgenticLlama
 cd /d "%~dp0"
 echo.
-echo  LocalAI - Advanced llama.cpp Interface
+echo  PyAgenticLlama - Advanced llama.cpp Interface
 echo  ========================================
 echo.
 echo  Installing / updating dependencies...

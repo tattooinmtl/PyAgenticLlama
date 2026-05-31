@@ -119,7 +119,7 @@ async def lifespan(app):
     await stop_all()
     await mcp.disconnect_all()
 
-app = FastAPI(lifespan=lifespan, title='LocalAI')
+app = FastAPI(lifespan=lifespan, title='PyAgenticLlama')
 app.mount('/static', StaticFiles(directory=Path(__file__).parent / 'static'), name='static')
 
 @app.get('/')

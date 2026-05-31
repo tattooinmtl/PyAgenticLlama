@@ -23,7 +23,8 @@
     ]
   },
   "action_type": "python",
-  "code": "import importlib.util, sys\nspec = importlib.util.spec_from_file_location(\"web_search\", r\"C:\\Users\\ThePa\\AIWorkspace\\LocalAI\\app\\skills\\web_search.py\")\nmod = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(mod)\n\ndef execute(**kwargs):\n    return mod.execute(**kwargs)\n",
+  "code": "",
+  "py_file": "web_search.py",
   "webhook_url": "",
   "enabled": true
 }

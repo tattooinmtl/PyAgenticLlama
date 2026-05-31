@@ -2136,7 +2136,7 @@ async function openCodingModal() {
     ? '<span style="color:var(--green)">✅ VS Code connected</span>'
     : '<span style="color:var(--text3)">○ VS Code not connected — install <code>vscode-extension/install.bat</code></span>';
 
-  // Pre-fill from active session only (never from vsCode.workspace — that caused the LocalAI lock-in bug)
+  // Pre-fill from active session only (never from vsCode.workspace — that caused the PyAgenticLlama lock-in bug)
   if (state.codingSession) {
     document.getElementById('cs-name').value   = state.codingSession.name   || '';
     document.getElementById('cs-folder').value = state.codingSession.folder || '';
