@@ -1,9 +1,10 @@
 <div align="center">
-  <img src="app/logo.png" alt="PyAgenticLlama" width="360">
+  <a href="https://globalwarningnetworks.com/PyAgenticLlama/">
+    <img src="app/logo.png" alt="PyAgenticLlama" width="360">
+  </a>
   <h1>PyAgenticLlama</h1>
   <p><strong>Advanced local AI interface built on llama.cpp</strong> — streaming chat, agent orchestration, persistent memory, secure vault, skill system, and external API provider support.</p>
-
-[📖 Helper to create skills](https://globalwarningnetworks.com/PyAgenticLlama/)
+  <p><a href="https://globalwarningnetworks.com/PyAgenticLlama/">📖 Helper to create skills</a></p>
 </div>
 
 ---
